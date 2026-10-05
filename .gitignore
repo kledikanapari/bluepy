@@ -14,4 +14,4 @@ bluez-5.4/attrib/gatttool
 /build
 /bluepy.egg-info
 /dist
-/bluepy/bluez-5.47
+/bluepy/bluez-5.87

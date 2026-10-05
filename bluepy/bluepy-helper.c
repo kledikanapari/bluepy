@@ -33,13 +33,14 @@
 #include <glib.h>
 
 
-#include "lib/bluetooth.h"
-#include "lib/hci.h"
-#include "lib/hci_lib.h"
-#include "lib/sdp.h"
-#include "lib/uuid.h"
-#include "lib/mgmt.h"
+#include "bluetooth/bluetooth.h"
+#include "bluetooth/hci.h"
+#include "bluetooth/hci_lib.h"
+#include "bluetooth/sdp.h"
+#include "bluetooth/uuid.h"
+#include "bluetooth/mgmt.h"
 #include "src/shared/mgmt.h"
+#include "src/shared/att-types.h"
 
 #include <btio/btio.h>
 #include "att.h"
@@ -600,7 +601,7 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
         g_error_free(gerr);
         mtu = ATT_DEFAULT_LE_MTU;
     }
-    else if (cid == ATT_CID)
+    else if (cid == BT_ATT_CID)
         mtu = ATT_DEFAULT_LE_MTU;
 
     attrib = g_attrib_new(iochannel, mtu, false);
@@ -1706,6 +1707,239 @@ static void cmd_scan(int argcp, char **argvp)
     }
 }
 
+/* Bluetooth 5 extended scanning. When the controller supports LE Extended
+ * Advertising the kernel uses these commands, and the controller then
+ * rejects the legacy scan commands ("Command Disallowed"). Extended scanning
+ * also reports advertisers that the legacy commands can't see. */
+#define OCF_LE_SET_EXT_SCAN_PARAMETERS  0x0041
+#define OCF_LE_SET_EXT_SCAN_ENABLE      0x0042
+#define EVT_LE_EXT_ADVERTISING_REPORT   0x0D
+
+#define LE_FEATURE_EXT_ADV_OCTET        1     /* LE feature bit 12 */
+#define LE_FEATURE_EXT_ADV_MASK         0x10
+
+#define EXT_ADV_REPORT_FIXED_SIZE       24    /* without the data */
+#define EXT_ADV_EVT_CONNECTABLE         0x0001
+#define EXT_ADV_EVT_DATA_STATUS(t)      (((t) >> 5) & 0x03)
+#define EXT_ADV_DATA_COMPLETE           0
+#define EXT_ADV_DATA_MORE               1
+#define EXT_ADV_ADDR_ANONYMOUS          0xFF
+#define EXT_ADV_MAX_DATA                1650
+
+static bool hci_ext_scan = false;   /* the passive scan uses extended commands */
+
+/* Advertising data split across several extended reports is put back
+ * together here before being passed on */
+static struct {
+    bool active;
+    bdaddr_t bdaddr;
+    uint8_t addr_type;
+    uint8_t sid;
+    uint16_t evt_type;
+    uint8_t rssi;
+    uint8_t data[EXT_ADV_MAX_DATA];
+    size_t len;
+} ext_frag;
+
+static uint8_t le_addr_type(uint8_t hci_addr_type)
+{
+    switch (hci_addr_type) {
+        case 0x00: /* public */
+        case 0x02: /* public identity, resolved by the controller */
+            return BDADDR_LE_PUBLIC;
+        case 0x01: /* random */
+        case 0x03: /* random static identity, resolved by the controller */
+            return BDADDR_LE_RANDOM;
+        default:
+            return 0;
+    }
+}
+
+static void send_scan_result(const bdaddr_t *bdaddr, uint8_t hci_addr_type, uint8_t rssi,
+                             bool connectable, const uint8_t *data, size_t len)
+{
+    struct mgmt_addr_info addr;
+
+    if (conn_state != STATE_SCANNING)
+        return;
+
+    bacpy(&addr.bdaddr, bdaddr);
+    addr.type = le_addr_type(hci_addr_type);
+
+    resp_begin(rsp_SCAN);
+    send_addr(&addr);
+    send_uint(tag_RSSI, 256-rssi);
+    send_uint(tag_FLAG, connectable ? 0 : MGMT_DEV_FOUND_NOT_CONNECTABLE);
+    if (len)
+        send_data(data, len);
+    resp_end();
+}
+
+/* Legacy LE Advertising Report; data starts at Num_Reports */
+static void process_adv_report(const uint8_t *data, size_t len)
+{
+    const uint8_t *rp = data + 1;
+    const uint8_t *end = data + len;
+    uint8_t num_reports;
+
+    if (len < 1)
+        return;
+
+    /* One event can hold several variable-length reports */
+    for (num_reports = data[0]; num_reports > 0; num_reports--) {
+        const le_advertising_info *ev = (const le_advertising_info *) rp;
+
+        if (rp + LE_ADVERTISING_INFO_SIZE + 1 > end ||
+            rp + LE_ADVERTISING_INFO_SIZE + ev->length + 1 > end) {
+            DBG("Truncated advertising report");
+            break;
+        }
+        /* ADV_SCAN_IND (2) and ADV_NONCONN_IND (3) aren't connectable */
+        send_scan_result(&ev->bdaddr, ev->bdaddr_type, ev->data[ev->length],
+                         ev->evt_type != 0x02 && ev->evt_type != 0x03,
+                         ev->data, ev->length);
+        rp += LE_ADVERTISING_INFO_SIZE + ev->length + 1;
+    }
+}
+
+static void ext_frag_flush(void)
+{
+    if (ext_frag.active)
+        send_scan_result(&ext_frag.bdaddr, ext_frag.addr_type, ext_frag.rssi,
+                         ext_frag.evt_type & EXT_ADV_EVT_CONNECTABLE,
+                         ext_frag.data, ext_frag.len);
+    ext_frag.active = false;
+    ext_frag.len = 0;
+}
+
+/* LE Extended Advertising Report; data starts at Num_Reports */
+static void process_ext_adv_report(const uint8_t *data, size_t len)
+{
+    const uint8_t *rp = data + 1;
+    const uint8_t *end = data + len;
+    uint8_t num_reports;
+
+    if (len < 1)
+        return;
+
+    for (num_reports = data[0]; num_reports > 0; num_reports--) {
+        uint16_t evt_type;
+        uint8_t addr_type, sid, rssi, data_len;
+        bdaddr_t bdaddr;
+        const uint8_t *adv_data;
+        size_t n;
+
+        if (rp + EXT_ADV_REPORT_FIXED_SIZE > end ||
+            rp + EXT_ADV_REPORT_FIXED_SIZE + rp[23] > end) {
+            DBG("Truncated extended advertising report");
+            break;
+        }
+        evt_type  = bt_get_le16(rp);
+        addr_type = rp[2];
+        memcpy(&bdaddr, rp + 3, sizeof(bdaddr));
+        sid       = rp[11];
+        rssi      = rp[13];
+        data_len  = rp[23];
+        adv_data  = rp + EXT_ADV_REPORT_FIXED_SIZE;
+        rp += EXT_ADV_REPORT_FIXED_SIZE + data_len;
+
+        /* Anonymous advertising carries no address: reporting it would
+         * show a device at 00:00:00:00:00:00 */
+        if (addr_type == EXT_ADV_ADDR_ANONYMOUS)
+            continue;
+
+        if (ext_frag.active &&
+            (bacmp(&ext_frag.bdaddr, &bdaddr) || ext_frag.addr_type != addr_type ||
+             ext_frag.sid != sid))
+            ext_frag_flush();     /* the rest of that data never came */
+
+        if (!ext_frag.active) {
+            ext_frag.active = true;
+            bacpy(&ext_frag.bdaddr, &bdaddr);
+            ext_frag.addr_type = addr_type;
+            ext_frag.sid = sid;
+            ext_frag.evt_type = evt_type;
+            ext_frag.len = 0;
+        }
+        ext_frag.rssi = rssi;
+        n = MIN((size_t) data_len, sizeof(ext_frag.data) - ext_frag.len);
+        memcpy(ext_frag.data + ext_frag.len, adv_data, n);
+        ext_frag.len += n;
+
+        /* Complete, or truncated: no more data will come */
+        if (EXT_ADV_EVT_DATA_STATUS(evt_type) != EXT_ADV_DATA_MORE)
+            ext_frag_flush();
+    }
+}
+
+static int hci_le_cmd(int dd, uint16_t ocf, void *cparam, int clen)
+{
+    struct hci_request rq;
+    uint8_t status;
+
+    memset(&rq, 0, sizeof(rq));
+    rq.ogf = OGF_LE_CTL;
+    rq.ocf = ocf;
+    rq.cparam = cparam;
+    rq.clen = clen;
+    rq.rparam = &status;
+    rq.rlen = 1;
+
+    if (hci_send_req(dd, &rq, 10000) < 0)
+        return -1;
+    if (status) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+static bool hci_le_ext_adv_supported(int dd)
+{
+    le_read_local_supported_features_rp rp;
+    struct hci_request rq;
+
+    memset(&rq, 0, sizeof(rq));
+    rq.ogf = OGF_LE_CTL;
+    rq.ocf = OCF_LE_READ_LOCAL_SUPPORTED_FEATURES;
+    rq.rparam = &rp;
+    rq.rlen = LE_READ_LOCAL_SUPPORTED_FEATURES_RP_SIZE;
+
+    if (hci_send_req(dd, &rq, 1000) < 0 || rp.status)
+        return false;
+    return rp.features[LE_FEATURE_EXT_ADV_OCTET] & LE_FEATURE_EXT_ADV_MASK;
+}
+
+static int passive_scan_enable(int dd, bool enable)
+{
+    uint8_t filter_dup = 0x00;  // do not filter duplicates
+
+    if (hci_ext_scan) {
+        uint8_t cp[6] = { enable, filter_dup, 0, 0, 0, 0 };  /* no duration/period */
+        return hci_le_cmd(dd, OCF_LE_SET_EXT_SCAN_ENABLE, cp, sizeof(cp));
+    }
+    return hci_le_set_scan_enable(dd, enable, filter_dup, 10000);
+}
+
+static int passive_scan_set_params(int dd)
+{
+    uint8_t own_type = LE_PUBLIC_ADDRESS;
+    uint8_t scan_type = 0x00;  // passive
+    uint8_t filter_policy = 0x00;
+    uint16_t interval = htobs(0x0010);
+    uint16_t window = htobs(0x0010);
+
+    if (hci_ext_scan) {
+        /* LE 1M PHY only */
+        uint8_t cp[8] = { own_type, filter_policy, 0x01, scan_type };
+        bt_put_le16(0x0010, cp + 4);
+        bt_put_le16(0x0010, cp + 6);
+        return hci_le_cmd(dd, OCF_LE_SET_EXT_SCAN_PARAMETERS, cp, sizeof(cp));
+    }
+    return hci_le_set_scan_parameters(dd, scan_type, interval, window,
+                                      own_type, filter_policy, 10000);
+}
+
 /* hci_io is owned by the watch, and closes hci_dd when the watch goes away.
  * Call this once hci_monitor_cb() has returned FALSE. */
 static void passive_scan_watch_removed(void)
@@ -1722,6 +1956,7 @@ static void passive_scan_close(void)
     else if (hci_dd >= 0)
         hci_close_dev(hci_dd);
     passive_scan_watch_removed();
+    ext_frag.active = false;
 }
 
 static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer user_data)
@@ -1750,6 +1985,8 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
     switch (type) {
         case HCI_COMMAND_PKT: {
             hci_command_hdr *ch;
+            bool scan_disabled = false;
+
             if ((r= g_io_channel_read_chars(chan, (gchar *) buf, HCI_COMMAND_HDR_SIZE, &len, &err)) != G_IO_STATUS_NORMAL) {
                 if (err) DBG("g_io_channel_read_chars() reports state %d: %s", r, err->message);
                 return TRUE;
@@ -1760,25 +1997,25 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
                 if (err) DBG("g_io_channel_read_chars() reports state %d: %s", r, err->message);
                 return TRUE;
             }
-            switch(ch->opcode) {
-                case 0x2000|OCF_LE_SET_SCAN_ENABLE: {
-                    le_set_scan_enable_cp *lescan = (le_set_scan_enable_cp *) ptr;
-                    if (lescan->enable) {
-                        DBG("Start of passive scan.");
-                    } else {
-                        if (conn_state == STATE_SCANNING) {
-                            set_state(STATE_DISCONNECTED);
-                        }
-                        DBG("End of passive scan - removing watch.");
-                        passive_scan_watch_removed();
-                        return FALSE; // remove watch
-                    }
-                }
-                break;
+            switch(btohs(ch->opcode)) {
+                /* Someone else (e.g. the kernel) stopped scanning */
+                case 0x2000|OCF_LE_SET_SCAN_ENABLE:
+                case 0x2000|OCF_LE_SET_EXT_SCAN_ENABLE:
+                    scan_disabled = ch->plen >= 1 && !ptr[0];
+                    break;
 
                 default:
                     DBG("Ignoring HCI COMMAND 0x%04x", ch->opcode);
             } // switch(ch->opcode)
+
+            if (scan_disabled) {
+                if (conn_state == STATE_SCANNING) {
+                    set_state(STATE_DISCONNECTED);
+                }
+                DBG("End of passive scan - removing watch.");
+                passive_scan_watch_removed();
+                return FALSE; // remove watch
+            }
         } break;
 
         case HCI_EVENT_PKT: {
@@ -1794,64 +2031,26 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
                 return TRUE;
             }
             switch(eh->evt) {
-                case EVT_CMD_COMPLETE: {
-                    // evt_cmd_complete *cmpl = (void *) ptr;
-                    // DBG("command complete (0x%02x|0x%04x) 0x%02x 0x%02x", cmpl->ncmd, cmpl->opcode, *(uint8_t *)(ptr+3), *(uint8_t *)(ptr+4));
-                }
+                case EVT_CMD_COMPLETE:
                 break;
 
                 case EVT_LE_META_EVENT: {
-                    evt_le_meta_event *meta = (void *) ptr;
+                    if (eh->plen < 1)
+                        return TRUE;
 
-                    switch(meta->subevent) {
-                        case EVT_LE_ADVERTISING_REPORT: {
-                            /* One event can hold several variable-length reports */
-                            uint8_t num_reports = meta->data[0];
-                            const uint8_t *rp = meta->data + 1;
-                            const uint8_t *end = ptr + eh->plen;
+                    switch(ptr[0]) {   /* subevent */
+                        case EVT_LE_ADVERTISING_REPORT:
+                            process_adv_report(ptr + 1, eh->plen - 1);
+                            break;
 
-                            while (num_reports-- > 0) {
-                                const le_advertising_info *ev = (const le_advertising_info *) rp;
-                                struct mgmt_addr_info addr;
-                                uint8_t rssi;
-
-                                if (rp + LE_ADVERTISING_INFO_SIZE + 1 > end ||
-                                    rp + LE_ADVERTISING_INFO_SIZE + ev->length + 1 > end) {
-                                    DBG("Truncated advertising report");
-                                    break;
-                                }
-                                rssi = ev->data[ev->length];
-                                switch (ev->bdaddr_type) {
-                                    case 0x00: /* public */
-                                    case 0x02: /* public identity, resolved by the controller */
-                                        addr.type= BDADDR_LE_PUBLIC; break;
-                                    case 0x01: /* random */
-                                    case 0x03: /* random static identity, resolved by the controller */
-                                        addr.type= BDADDR_LE_RANDOM; break;
-                                    default: addr.type= 0;
-                                }
-                                addr.bdaddr= ev->bdaddr;
-
-                                if (conn_state == STATE_SCANNING) {
-                                    resp_begin(rsp_SCAN);
-                                    send_addr(&addr);
-                                    send_uint(tag_RSSI, 256-rssi);
-                                    /* ADV_SCAN_IND and ADV_NONCONN_IND aren't connectable */
-                                    send_uint(tag_FLAG, (ev->evt_type == 0x02 || ev->evt_type == 0x03) ?
-                                                            MGMT_DEV_FOUND_NOT_CONNECTABLE : 0);
-                                    if (ev->length)
-                                        send_data(ev->data, ev->length);
-                                    resp_end();
-                                }
-                                rp += LE_ADVERTISING_INFO_SIZE + ev->length + 1;
-                            }
-                        }
-                        break;
+                        case EVT_LE_EXT_ADVERTISING_REPORT:
+                            process_ext_adv_report(ptr + 1, eh->plen - 1);
+                            break;
 
                         default:
-                            DBG("Ignoring EVT_LE_ADVERTISING_REPORT subevent %02x", meta->subevent);
+                            DBG("Ignoring LE meta event subevent %02x", ptr[0]);
                             return TRUE;
-                    } // switch (meta->subevent)
+                    } // switch (subevent)
 
                 } // case EVT_LE_META_EVENT
                 break;
@@ -1875,13 +2074,6 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
 static void discover(bool start)
 {
     int err;
-    uint8_t own_type = LE_PUBLIC_ADDRESS;
-    uint8_t scan_type = 0x00;  // passive
-    uint8_t filter_policy = 0x00;
-    uint16_t interval = htobs(0x0010);
-    uint16_t window = htobs(0x0010);
-    uint8_t filter_dup = 0x00;  // do not filter duplicates
-
     struct hci_filter nf;
 
     if (start) {
@@ -1901,9 +2093,11 @@ static void discover(bool start)
             return;
         }
 
-        hci_le_set_scan_enable(hci_dd, 0x00, filter_dup, 10000);
-        err = hci_le_set_scan_parameters(hci_dd, scan_type, interval, window,
-                                             own_type, filter_policy, 10000);
+        hci_ext_scan = hci_le_ext_adv_supported(hci_dd);
+        DBG("Using %s scan commands", hci_ext_scan ? "extended" : "legacy");
+
+        passive_scan_enable(hci_dd, false);
+        err = passive_scan_set_params(hci_dd);
         if (err < 0) {
             DBG("Set scan parameters failed");
             passive_scan_close();
@@ -1917,7 +2111,6 @@ static void discover(bool start)
         hci_filter_set_event(EVT_LE_META_EVENT, &nf);
         hci_filter_set_event(EVT_CMD_COMPLETE, &nf);
         hci_filter_set_ptype(HCI_COMMAND_PKT, &nf);
-        hci_filter_set_event(OCF_LE_SET_SCAN_ENABLE, &nf);
 
         if (setsockopt(hci_dd, SOL_HCI, HCI_FILTER, &nf, sizeof(nf)) < 0) {
             DBG("Could not set socket options");
@@ -1933,7 +2126,7 @@ static void discover(bool start)
         g_io_channel_unref(hci_io);
 
         DBG("LE Scan ...");
-        err = hci_le_set_scan_enable(hci_dd, 0x01, filter_dup, 10000);
+        err = passive_scan_enable(hci_dd, true);
         if (err < 0) {
             DBG("Enable scan failed");
             passive_scan_close();
@@ -1950,7 +2143,7 @@ static void discover(bool start)
         // Use the socket the scan was started on; opening a new one here
         // would leak it, and its watch would keep reporting devices
         if (hci_dd >= 0) {
-            err = hci_le_set_scan_enable(hci_dd, 0x00, filter_dup, 10000);
+            err = passive_scan_enable(hci_dd, false);
             if (err < 0) {
                 DBG("Disable scan failed");
                 errcode = err_BAD_STATE;
@@ -2251,7 +2444,7 @@ int main(int argc, char *argv[])
     cmd_disconnect(0, NULL);
     if (hci_dd >= 0) {
         // Don't leave the controller scanning after we've gone
-        hci_le_set_scan_enable(hci_dd, 0x00, 0x00, 10000);
+        passive_scan_enable(hci_dd, false);
         passive_scan_close();
     }
     fflush(stdout);
