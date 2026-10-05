@@ -45,6 +45,13 @@ environment instead:
     $ cd bluepy
     $ pip3 install .
 
+Without pip, `python3 setup.py build` and `sudo python3 setup.py install`
+still work (setuptools says they are deprecated). If the install fails with
+`AttributeError: install_layout` (Debian/Ubuntu setuptools), run it as
+`sudo SETUPTOOLS_USE_DISTUTILS=stdlib python3 setup.py install`. Or skip
+installing altogether: run `make -C bluepy` and put the `bluepy` directory
+next to your script.
+
 Permissions
 -----------
 

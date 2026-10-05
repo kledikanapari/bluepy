@@ -1,10 +1,11 @@
 """Builds bluepy-helper (C) along with the Python package.
 
-Package metadata is in pyproject.toml.
+Package metadata is in pyproject.toml (repeated below for old setuptools).
 """
 
 from setuptools.command.build_py import build_py
 from setuptools import setup
+import setuptools
 import subprocess
 import shlex
 import sys
@@ -57,7 +58,33 @@ except ImportError:
     pass
 
 
+# setuptools before 61 (e.g. 52 on Debian 11 / Raspberry Pi OS Bullseye)
+# ignore the [project] table: without this, 'python3 setup.py install' would
+# install an empty package called UNKNOWN
+legacy_metadata = {}
+if int(setuptools.__version__.split('.')[0]) < 61:
+    legacy_metadata = dict(
+        name='bluepy',
+        description='Python module for interfacing with BLE devices through Bluez',
+        author='Ian Harvey',
+        author_email='website-contact@fenditton.org',
+        url='https://github.com/IanHarvey/bluepy',
+        python_requires='>=3.8',
+        packages=['bluepy'],
+        package_data={
+            'bluepy': ['bluepy-helper', '*.json', 'bluez-src.tgz', 'bluepy-helper.c', 'version.h', 'Makefile']
+        },
+        entry_points={
+            'console_scripts': [
+                'thingy52=bluepy.thingy52:main',
+                'sensortag=bluepy.sensortag:main',
+                'blescan=bluepy.blescan:main',
+            ]
+        },
+    )
+
 setup(
     version=VERSION,
     cmdclass=setup_cmdclass,
+    **legacy_metadata
 )
