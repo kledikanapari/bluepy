@@ -40,11 +40,18 @@ For Python 3, you may need to use `pip3`:
     $ sudo apt-get install git build-essential libglib2.0-dev
     $ git clone https://github.com/IanHarvey/bluepy.git
     $ cd bluepy
-    $ python setup.py build
-    $ sudo python setup.py install
+    $ sudo pip3 install .
 
 I would recommend having command-line tools from BlueZ available for debugging. There
 are instructions for building BlueZ on the Raspberry Pi at http://www.elinux.org/RPi_Bluetooth_LE.
+
+Running the tests
+-----------------
+
+The unit tests don't need Bluetooth hardware (a fake `bluepy-helper` is used
+where needed):
+
+    $ python3 -m unittest discover -s tests
 
 Documentation
 -------------
@@ -63,6 +70,29 @@ The Python files are released into the public domain by their author, Ian Harvey
 
 Release Notes
 -------------
+
+Unreleased
+
+- Fix: calling connect() on a Peripheral which was still connected (or still
+  trying to connect, after a timeout with no reply) did nothing: bluepy-helper
+  silently ignored the request, so the device address was never updated.
+  A fresh helper is now used for every connection, and the cached services of
+  the previous device are discarded.
+- Fix: malformed device addresses (e.g. `str(b'AA:BB:CC:DD:EE:FF')` on Python 3)
+  were turned into 00:00:00:00:00:00 by bluepy-helper. They are now rejected
+  with ValueError (bluepy-helper also checks them), as is 00:00:00:00:00:00.
+- Connection failures now say why (e.g. "Connection refused", or that the
+  Bluetooth adapter is down or has no address)
+- Peripheral.deviceAddr is now kept up to date (same as Peripheral.addr)
+- Fix #425: scanning no longer aborts with "Address type changed during scan"
+- Scanner.start() now raises BTLEManagementError if the scan can't be started
+- Fix connectable flag of scan results, and passive scan socket handling
+  (leaked sockets, duplicate reports, possible 100% CPU)
+- Fix crashes in the OOB pairing code (getLocalOOB() on Python 3,
+  setRemoteOOB(), and in bluepy-helper)
+- bluepy-helper no longer aborts on malformed packets from a peripheral
+- Fix the import of btle on Python 2.7 (`queue` module)
+- Packaging: no more setuptools deprecation warnings; README is the long description
 
 Release 1.3.0
 

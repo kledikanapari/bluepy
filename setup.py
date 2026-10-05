@@ -38,7 +38,11 @@ setup_cmdclass = {
 # Discusssed at issue #158
 
 try:
-    from wheel.bdist_wheel import bdist_wheel
+    try:
+        # Part of setuptools since v70.1; the copy in 'wheel' is deprecated
+        from setuptools.command.bdist_wheel import bdist_wheel
+    except ImportError:
+        from wheel.bdist_wheel import bdist_wheel
 
     class BluepyBdistWheel(bdist_wheel):
         def finalize_options(self):
@@ -61,8 +65,8 @@ setup (
     keywords=[ 'Bluetooth', 'Bluetooth Smart', 'BLE', 'Bluetooth Low Energy' ],
     classifiers=[
         'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3',
+        'Operating System :: POSIX :: Linux',
     ],
     packages=['bluepy'],
     
