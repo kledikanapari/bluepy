@@ -17,20 +17,41 @@ You should not construct ``Characteristic`` objects directly. Instead, use the
 Instance Methods
 ----------------
 
-.. function:: read()
+.. function:: read([timeout])
 
-    Reads the current value of a characteristic as a string of bytes. For Python 2.x this
-    is a value of type `str`, and on Python 3.x this is of type `bytes`. This may be
-    used with the `struct` module to extract integer values from the data. 
-    
+    Reads the current value of a characteristic, as `bytes`. This may be
+    used with the `struct` module to extract integer values from the data.
+    See the ``Peripheral`` class for *timeout*.
 
-.. function:: write(data, [withResponse=False])
 
-    Writes the given *data* to the characteristic. *data* should be of type `str` for
-    Python 2.x, and type `bytes` for Python 3.x. Bluetooth LE allows the sender to
+.. function:: write(data, [withResponse=False [, timeout]])
+
+    Writes the given *data* (of type `bytes`) to the characteristic. Bluetooth LE allows the sender to
     request the peripheral to send a response to confirm that the data has been received.
-    Setting the *withResponse* parameter to *True* will make this request. A 
+    Setting the *withResponse* parameter to *True* will make this request. A
     `BTLEException` will be raised if the confirmation process fails.
+
+.. function:: enableNotifications([callback=None [, indicate=False [, timeout]]])
+
+    Asks the device to send a notification (or, with *indicate* set to *True*, an
+    indication) each time the value changes, by writing the characteristic's Client
+    Characteristic Configuration descriptor. With a *callback*, each one is passed to
+    ``callback(characteristic, data)``; otherwise to the peripheral's delegate. They
+    arrive while the program is in ``Peripheral.waitForNotifications()``, or in any
+    other call to the peripheral. Raises ``BTLEGattError`` if the characteristic
+    doesn't support them. See :ref:`notifications`.
+
+.. function:: disableNotifications([timeout])
+
+    Stops notifications and indications.
+
+.. function:: getDescriptors([forUUID=None [, hndEnd [, timeout]]])
+    :no-index:
+
+    Returns the characteristic's descriptors, optionally only those with UUID
+    *forUUID*. When the characteristic was found through
+    ``Service.getCharacteristics()``, only the handles up to the next characteristic
+    are searched; otherwise up to *hndEnd* (default 0xFFFF).
     
 .. function:: supportsRead()
 

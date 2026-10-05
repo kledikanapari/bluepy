@@ -39,6 +39,34 @@ Instance Methods
     AD type code, human-readable description and value (as reported by
     ``getDescription()`` and ``getValueText()``) for all available advertising
     data items.
+
+.. py:method:: getName()
+
+    Returns the device's complete local name, or else its short name, or ``None``.
+
+.. py:method:: getManufacturerData()
+
+    Returns a tuple *(company identifier, data)* from the manufacturer specific data,
+    or ``None``. The company identifiers are listed at
+    https://www.bluetooth.com/specifications/assigned-numbers/
+
+.. py:method:: getServiceData()
+
+    Returns a dictionary mapping service ``UUID`` objects to their service data (`bytes`).
+
+.. py:method:: getServiceUUIDs()
+
+    Returns the ``UUID`` objects of the services the device advertises, including those
+    it gives service data for.
+
+.. py:method:: matches([name [, serviceUUID [, minRSSI [, connectable]]]])
+
+    Returns ``True`` if the device has all the given properties: exactly that *name*,
+    the service *serviceUUID* among its advertised ones, a signal of at least *minRSSI*
+    dBm, and *connectable* or not.
+
+Only the last value of each kind of advertising data is kept: for example, a device
+sending two manufacturer data blocks only shows one.
     
 Properties
 ----------

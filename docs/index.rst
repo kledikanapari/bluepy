@@ -26,6 +26,7 @@ Contents:
    characteristic
    descriptor
    notifications
+   usage
    assignednumbers
 
 Indices and tables
