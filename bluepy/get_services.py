@@ -19,10 +19,12 @@ def get_html(url, local_filename):
     cachefilename = os.path.join(cachedir, local_filename)
 
     try:
-        html = file(cachefilename).read()
+        with open(cachefilename, "rb") as f:
+            html = f.read()
     except:
         html = requests.get(url).content
-        file(cachefilename, 'w').write(html)
+        with open(cachefilename, "wb") as f:
+            f.write(html)
     return html
 
 

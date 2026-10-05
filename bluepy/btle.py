@@ -5,14 +5,17 @@ from __future__ import print_function
 """Bluetooth Low Energy Python interface"""
 import sys
 import os
+import re
 import time
 import subprocess
 import binascii
-import select
 import struct
 import signal
-from queue import Queue, Empty
 from threading import Thread
+try:
+    from queue import Queue, Empty
+except ImportError: # Python 2
+    from Queue import Queue, Empty
 
 def preexec_function():
     # Ignore the SIGINT signal by setting the handler to the standard
@@ -34,6 +37,24 @@ def DBG(*args):
     if Debugging:
         msg = " ".join([str(a) for a in args])
         print(msg)
+
+_MAC_ADDR_RE = re.compile(r'^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\Z')
+
+def _checkMACAddress(addr):
+    '''Returns addr without surrounding whitespace, or raises ValueError if it
+       is not of the form XX:XX:XX:XX:XX:XX. bluepy-helper silently turns any
+       malformed address into 00:00:00:00:00:00, so it must be checked here.'''
+    try:
+        if isinstance(addr, bytes) and not isinstance(addr, str):
+            addr = addr.decode('ascii')
+        addr = addr.strip()
+    except (AttributeError, UnicodeDecodeError):
+        raise ValueError("Expected MAC address, got %s" % repr(addr))
+    if not _MAC_ADDR_RE.match(addr):
+        raise ValueError("Expected MAC address, got %s" % repr(addr))
+    if addr == "00:00:00:00:00:00":
+        raise ValueError("00:00:00:00:00:00 is not a valid device address")
+    return addr
 
 
 class BTLEException(Exception):
@@ -287,24 +308,35 @@ class BluepyHelper:
                                             stderr=self._stderr,
                                             universal_newlines=True,
                                             preexec_fn = preexec_function)
-            t = Thread(target=self._readToQueue)
+            # Bind the thread to this helper and queue, so that a thread left
+            # over from a previous helper never reads from a newer one
+            t = Thread(target=self._readToQueue, args=(self._helper, self._lineq))
             t.daemon = True               # don't wait for it to exit
             t.start()
 
-    def _readToQueue(self):
+    @staticmethod
+    def _readToQueue(helper, lineq):
         """Thread to read lines from stdout and insert in queue."""
-        while self._helper:
-            line = self._helper.stdout.readline()
+        while True:
+            line = helper.stdout.readline()
             if not line:                  # EOF
                 break
-            self._lineq.put(line)
+            lineq.put(line)
+        helper.stdout.close()
 
     def _stopHelper(self):
         if self._helper is not None:
             DBG("Stopping ", helperExe)
-            self._helper.stdin.write("quit\n")
-            self._helper.stdin.flush()
+            try:
+                self._helper.stdin.write("quit\n")
+                self._helper.stdin.flush()
+            except (IOError, OSError, ValueError):
+                pass                      # helper has already exited
             self._helper.wait()
+            try:
+                self._helper.stdin.close()
+            except (IOError, OSError):
+                pass
             self._helper = None
         if self._stderr is not None:
             self._stderr.close()
@@ -328,7 +360,7 @@ class BluepyHelper:
     def parseResp(line):
         resp = {}
         for item in line.rstrip().split('\x1e'):
-            (tag, tval) = item.split('=')
+            (tag, tval) = item.split('=', 1)
             if len(tval)==0:
                 val = None
             elif tval[0]=="$" or tval[0]=="'":
@@ -348,7 +380,10 @@ class BluepyHelper:
 
     def _waitResp(self, wantType, timeout=None):
         while True:
+            if self._helper is None:
+                raise BTLEInternalError("Helper not started (did you call connect()?)")
             if self._helper.poll() is not None:
+                self._stopHelper()
                 raise BTLEInternalError("Helper exited")
 
             try:
@@ -403,7 +438,8 @@ class Peripheral(BluepyHelper):
     def __init__(self, deviceAddr=None, addrType=ADDR_TYPE_PUBLIC, iface=None, timeout=None):
         BluepyHelper.__init__(self)
         self._serviceMap = None # Indexed by UUID
-        (self.deviceAddr, self.addrType, self.iface) = (None, None, None)
+        # deviceAddr is kept as an alias of addr for backwards compatibility
+        (self.addr, self.deviceAddr, self.addrType, self.iface) = (None, None, None, None)
 
         if isinstance(deviceAddr, ScanEntry):
             self._connect(deviceAddr.addr, deviceAddr.addrType, deviceAddr.iface, timeout)
@@ -439,30 +475,35 @@ class Peripheral(BluepyHelper):
             return resp
 
     def _connect(self, addr, addrType=ADDR_TYPE_PUBLIC, iface=None, timeout=None):
-        if len(addr.split(":")) != 6:
-            raise ValueError("Expected MAC address, got %s" % repr(addr))
+        addr = _checkMACAddress(addr)
         if addrType not in (ADDR_TYPE_PUBLIC, ADDR_TYPE_RANDOM):
             raise ValueError("Expected address type public or random, got {}".format(addrType))
+        # Never reuse a helper from an earlier connection or attempt: while it
+        # is still connected (or connecting, after a timeout) it ignores 'conn',
+        # so we would silently keep talking to the previous device.
+        self._stopHelper()
+        self._serviceMap = None
         self._startHelper(iface)
-        self.addr = addr
+        self.addr = self.deviceAddr = addr
         self.addrType = addrType
         self.iface = iface
         if iface is not None:
             self._writeCmd("conn %s %s %s\n" % (addr, addrType, "hci"+str(iface)))
         else:
             self._writeCmd("conn %s %s\n" % (addr, addrType))
-        rsp = self._getResp('stat', timeout)
-        timeout_exception = BTLEDisconnectError(
-            "Timed out while trying to connect to peripheral %s, addr type: %s" %
-            (addr, addrType), rsp)
-        if rsp is None:
-            raise timeout_exception
-        while rsp and rsp['state'][0] == 'tryconn':
+        try:
             rsp = self._getResp('stat', timeout)
+            while rsp is not None and rsp['state'][0] == 'tryconn':
+                rsp = self._getResp('stat', timeout)
+        except BTLEException:
+            self._stopHelper()
+            raise
         if rsp is None or rsp['state'][0] != 'conn':
             self._stopHelper()
             if rsp is None:
-                raise timeout_exception
+                raise BTLEDisconnectError(
+                    "Timed out while trying to connect to peripheral %s, addr type: %s" %
+                    (addr, addrType))
             else:
                 raise BTLEDisconnectError("Failed to connect to peripheral %s, addr type: %s"
                                           % (addr, addrType), rsp)
@@ -479,9 +520,13 @@ class Peripheral(BluepyHelper):
         # Unregister the delegate first
         self.setDelegate(None)
 
-        self._writeCmd("disc\n")
-        self._getResp('stat')
-        self._stopHelper()
+        try:
+            self._writeCmd("disc\n")
+            self._getResp('stat')
+        except (BTLEException, IOError, OSError):
+            pass                          # helper already gone or disconnected
+        finally:
+            self._stopHelper()
 
     def discoverServices(self):
         self._writeCmd("svcs\n")
@@ -595,41 +640,38 @@ class Peripheral(BluepyHelper):
     def _setRemoteOOB(self, address, address_type, oob_data, iface=None):
         if self._helper is None:
             self._startHelper(iface)
-        self.addr = address
+        self.addr = self.deviceAddr = address
         self.addrType = address_type
         self.iface = iface
         cmd = "remote_oob " + address + " " + address_type
-        if oob_data['C_192'] is not None and oob_data['R_192'] is not None:
+        if oob_data.get('C_192') is not None and oob_data.get('R_192') is not None:
             cmd += " C_192 " + oob_data['C_192'] + " R_192 " + oob_data['R_192']
-        if oob_data['C_256'] is not None and oob_data['R_256'] is not None:
+        if oob_data.get('C_256') is not None and oob_data.get('R_256') is not None:
             cmd += " C_256 " + oob_data['C_256'] + " R_256 " + oob_data['R_256']
-        if iface is not None:
-            cmd += " hci"+str(iface)
-        self._writeCmd(cmd)
+        self._mgmtCmd(cmd)
 
     def setRemoteOOB(self, address, address_type, oob_data, iface=None):
-        if len(address.split(":")) != 6:
-            raise ValueError("Expected MAC address, got %s" % repr(address))
+        if isinstance(address, ScanEntry):
+            (address, address_type, iface) = (address.addr, address.addrType, address.iface)
+        address = _checkMACAddress(address)
         if address_type not in (ADDR_TYPE_PUBLIC, ADDR_TYPE_RANDOM):
             raise ValueError("Expected address type public or random, got {}".format(address_type))
-        if isinstance(address, ScanEntry):
-            return self._setOOB(address.addr, address.addrType, oob_data, address.iface)
-        elif address is not None:
-            return self._setRemoteOOB(address, address_type, oob_data, iface)
+        return self._setRemoteOOB(address, address_type, oob_data, iface)
 
     def getLocalOOB(self, iface=None):
         if self._helper is None:
             self._startHelper(iface)
         self.iface = iface
         self._writeCmd("local_oob\n")
-        if iface is not None:
-            cmd += " hci"+str(iface)
-        resp = self._getResp('oob')
+        resp = self._getResp(['oob', 'mgmt'])
         if resp is not None:
-            data = resp.get('d', [''])[0]
-            if data is None:
+            data = resp.get('d', [None])[0]
+            if resp['rsp'][0] != 'oob' or not data:
                 raise BTLEManagementError(
-                                "Failed to get local OOB data.")
+                                "Failed to get local OOB data.", resp)
+            if len(data) < 51:
+                raise BTLEManagementError(
+                                "Malformed local OOB data (length %d)." % len(data))
             if struct.unpack_from('<B',data,0)[0] != 8 or struct.unpack_from('<B',data,1)[0] != 0x1b:
                 raise BTLEManagementError(
                                 "Malformed local OOB data (address).")
@@ -651,12 +693,14 @@ class Peripheral(BluepyHelper):
                 raise BTLEManagementError(
                                 "Malformed local OOB data (flags).")
             flags = data[50:51]
-            return {'Address' : ''.join(["%02X" % struct.unpack('<B',c)[0] for c in address]),
-                    'Type' : ''.join(["%02X" % struct.unpack('<B',c)[0] for c in address_type]),
-                    'Role' : ''.join(["%02X" % struct.unpack('<B',c)[0] for c in role]),
-                    'C_256' : ''.join(["%02X" % struct.unpack('<B',c)[0] for c in confirm]),
-                    'R_256' : ''.join(["%02X" % struct.unpack('<B',c)[0] for c in random]),
-                    'Flags' : ''.join(["%02X" % struct.unpack('<B',c)[0] for c in flags]),
+            # Iterating over bytes gives ints on Python 3, so don't use struct here
+            hexstr = lambda b: binascii.b2a_hex(b).decode('ascii').upper()
+            return {'Address' : hexstr(address),
+                    'Type' : hexstr(address_type),
+                    'Role' : hexstr(role),
+                    'C_256' : hexstr(confirm),
+                    'R_256' : hexstr(random),
+                    'Flags' : hexstr(flags),
                     }
 
     def __del__(self):
@@ -725,8 +769,12 @@ class ScanEntry:
 
     def _update(self, resp):
         addrType = self.addrTypes.get(resp['type'][0], None)
-        if (self.addrType is not None) and (addrType != self.addrType):
-            raise BTLEInternalError("Address type changed during scan, for address %s" % self.addr)
+        if addrType is None:
+            addrType = self.addrType
+        elif (self.addrType is not None) and (addrType != self.addrType):
+            # Seen with real devices (#425); not worth aborting the whole
+            # scan for, so just keep the most recently reported type
+            DBG("Address type changed during scan, for address %s" % self.addr)
         self.addrType = addrType
         self.rssi = -resp['rssi'][0]
         self.connectable = ((resp['flag'][0] & 0x4) == 0)
@@ -831,6 +879,9 @@ class Scanner(BluepyHelper):
             rsp = self._waitResp("stat")
             assert rsp["state"][0] == "disc"
             self._mgmtCmd(self._cmd())
+            return
+        self._stopHelper()
+        raise BTLEManagementError("Failed to start scan", rsp)
 
     def stop(self):
         self._mgmtCmd(self._cmd()+"end")

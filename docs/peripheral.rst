@@ -39,9 +39,11 @@ Instance Methods
 
     Makes a connection to the device indicated by *addr*, with address type
     *addrType* and interface number *iface* and a timeout parameter *timeout* (see the ``Peripheral`` constructor for details).
-    You should only call
-    this method if the ``Peripheral`` is un-connected (i.e. you did not pass a *addr*
-    to the constructor); a given peripheral object cannot be re-connected once connected.
+    If the ``Peripheral`` is still connected (or still trying to connect) to a device,
+    that connection is closed first, and services discovered on it are forgotten.
+
+    Raises ``ValueError`` if *addr* is not of the form ``"11:22:33:ab:cd:ed"``
+    (surrounding whitespace is ignored), or is ``"00:00:00:00:00:00"``.
 
 .. function:: disconnect()
 
