@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bluepy"
+# The version is set in setup.py, which also writes it into bluepy/version.h
+dynamic = ["version"]
+description = "Python module for interfacing with BLE devices through Bluez"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "Ian Harvey", email = "website-contact@fenditton.org" }]
+keywords = ["Bluetooth", "Bluetooth Smart", "BLE", "Bluetooth Low Energy"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Hardware",
+]
+
+[project.urls]
+Homepage = "https://github.com/IanHarvey/bluepy"
+Documentation = "http://ianharvey.github.io/bluepy-doc/"
+
+[project.scripts]
+thingy52 = "bluepy.thingy52:main"
+sensortag = "bluepy.sensortag:main"
+blescan = "bluepy.blescan:main"
+
+[tool.setuptools]
+packages = ["bluepy"]
+
+[tool.setuptools.package-data]
+bluepy = ["bluepy-helper", "*.json", "bluez-src.tgz", "bluepy-helper.c", "version.h", "Makefile"]

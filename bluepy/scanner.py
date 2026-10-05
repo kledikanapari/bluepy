@@ -1,8 +1,7 @@
-#!/usr/bin/python
-from __future__ import print_function
+#!/usr/bin/env python3
 
-from time import gmtime, strftime, sleep
-from bluepy.btle import Scanner, DefaultDelegate, BTLEException
+from time import gmtime, strftime
+from bluepy.btle import Scanner, DefaultDelegate
 import sys
 
 

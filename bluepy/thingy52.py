@@ -5,7 +5,7 @@ import binascii
 
 def write_uint16(data, value, index):
     """ Write 16bit value into data string at index and return new string """
-    data = data.decode('utf-8')  # This line is added to make sure both Python 2 and 3 works
+    data = data.decode('utf-8')
     return '{}{:02x}{:02x}{}'.format(
                 data[:index*4], 
                 value & 0xFF, value >> 8, 
@@ -13,7 +13,7 @@ def write_uint16(data, value, index):
 
 def write_uint8(data, value, index):
     """ Write 8bit value into data string at index and return new string """
-    data = data.decode('utf-8')  # This line is added to make sure both Python 2 and 3 works
+    data = data.decode('utf-8')
     return '{}{:02x}{}'.format(
                 data[:index*2], 
                 value, 

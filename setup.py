@@ -1,4 +1,7 @@
-"""Python setup script for bluepy"""
+"""Builds bluepy-helper (C) along with the Python package.
+
+Package metadata is in pyproject.toml.
+"""
 
 from setuptools.command.build_py import build_py
 from setuptools import setup
@@ -17,12 +20,12 @@ def pre_install():
             verfile.write('#define VERSION_STRING "%s"\n' % VERSION)
         for cmd in [ "make -C ./bluepy clean", "make -C bluepy -j1" ]:
             print("execute " + cmd)
-            msgs = subprocess.check_output(shlex.split(cmd), stderr=subprocess.STDOUT)
+            subprocess.check_output(shlex.split(cmd), stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         print("Failed to compile bluepy-helper. Exiting install.")
         print("Command was " + repr(cmd) + " in " + os.getcwd())
         print("Return code was %d" % e.returncode)
-        print("Output was:\n%s" % e.output)
+        print("Output was:\n%s" % e.output.decode(errors='replace'))
         sys.exit(1)
 
 class my_build_py(build_py):
@@ -54,32 +57,7 @@ except ImportError:
     pass
 
 
-setup (
-    name='bluepy',
+setup(
     version=VERSION,
-    description='Python module for interfacing with BLE devices through Bluez',
-    author='Ian Harvey',
-    author_email='website-contact@fenditton.org',
-    url='https://github.com/IanHarvey/bluepy',
-    download_url='https://github.com/IanHarvey/bluepy/tarball/v/%s' % VERSION,
-    keywords=[ 'Bluetooth', 'Bluetooth Smart', 'BLE', 'Bluetooth Low Energy' ],
-    classifiers=[
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Operating System :: POSIX :: Linux',
-    ],
-    packages=['bluepy'],
-    
-    package_data={
-        'bluepy': ['bluepy-helper', '*.json', 'bluez-src.tgz', 'bluepy-helper.c', 'version.h', 'Makefile']
-    },
     cmdclass=setup_cmdclass,
-    entry_points={
-        'console_scripts': [
-            'thingy52=bluepy.thingy52:main',
-            'sensortag=bluepy.sensortag:main',
-            'blescan=bluepy.blescan:main',
-        ]
-    }
 )
-

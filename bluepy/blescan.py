@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-from __future__ import print_function
+#!/usr/bin/env python3
 import argparse
 import binascii
 import os
@@ -93,7 +92,7 @@ class ScanPrint(btle.DefaultDelegate):
                 print ('\t' + desc + ': <' + val + '>')
         if not dev.scanData:
             print ('\t(no data)')
-        print
+        print()
 
 
 def main():
@@ -134,7 +133,7 @@ def main():
             dev = btle.Peripheral(d)
             dump_services(dev)
             dev.disconnect()
-            print
+            print()
 
 if __name__ == "__main__":
     main()
