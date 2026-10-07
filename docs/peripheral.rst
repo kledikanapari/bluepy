@@ -8,7 +8,7 @@ Bluepy's ``Peripheral`` class encapsulates a connection to a Bluetooth LE periph
 Constructor
 -----------
 
-.. function:: Peripheral([deviceAddr=None, [addrType=ADDR_TYPE_PUBLIC [, iface=None [, timeout=None]]]])
+.. function:: Peripheral([deviceAddr=None, [addrType=ADDR_TYPE_PUBLIC [, iface=None [, timeout [, responseTimeout]]]]])
 
    If *deviceAddr* is not ``None``, creates a ``Peripheral`` object and makes a connection
    to the device indicated by *deviceAddr*. *deviceAddr* should be a string comprising six hex
@@ -25,6 +25,14 @@ Constructor
    On Linux, 0 means */dev/hci0*, 1 means */dev/hci1* and so on.
 
    The *timeout* parameter (in seconds) can be used to limit the hang time for trying to connect to device.
+   By default it is the *responseTimeout*; ``None`` waits for ever.
+
+   *responseTimeout* sets the ``responseTimeout`` property: how long, in seconds, each
+   operation waits for a reply (default ``btle.DEFAULT_RESPONSE_TIMEOUT``, 60 seconds;
+   ``None`` waits for ever). Most methods below also take a *timeout* argument, which
+   overrides it for that call. When there is no reply in time, ``BTLETimeoutError`` (a
+   subclass of ``BTLEDisconnectError``) is raised, and the connection is closed. See
+   :ref:`usage`.
 
    *deviceAddr* may also be a ``ScanEntry`` object. In this case the device address,
    address type, and interface number are all taken from the ``ScanEntry`` values, and
@@ -39,13 +47,16 @@ Instance Methods
 
     Makes a connection to the device indicated by *addr*, with address type
     *addrType* and interface number *iface* and a timeout parameter *timeout* (see the ``Peripheral`` constructor for details).
-    You should only call
-    this method if the ``Peripheral`` is un-connected (i.e. you did not pass a *addr*
-    to the constructor); a given peripheral object cannot be re-connected once connected.
+    If the ``Peripheral`` is still connected (or still trying to connect) to a device,
+    that connection is closed first, and services discovered on it are forgotten.
+
+    Raises ``ValueError`` if *addr* is not of the form ``"11:22:33:ab:cd:ed"``
+    (surrounding whitespace is ignored), or is ``"00:00:00:00:00:00"``.
 
 .. function:: disconnect()
 
-    Drops the connection to the device, and cleans up associated OS resources. Although the
+    Drops the connection to the device, and cleans up associated OS resources. The
+    delegate is kept, for when you connect again. Although the
     Python destructor for a ``Peripheral`` will attempt to call this method, you should not
     rely on this happening at any particular time. Therefore, always explicitly call
     ``disconnect()`` if you have finished communicating with a device.
@@ -110,15 +121,21 @@ Instance Methods
 .. function:: waitForNotifications(timeout)
 
     Blocks until a notification is received from the peripheral, or until the
-    given *timeout* (in seconds) has elapsed. If a notification is received, the
-    delegate object's ``handleNotification()`` method will be called, and
-    ``waitForNotifications()`` will then return ``True``.
+    given *timeout* (in seconds, ``None`` for ever) has elapsed. If a notification
+    is received, it is passed to the callback given to
+    ``Characteristic.enableNotifications()``, or else to the delegate object's
+    ``handleNotification()`` method, and ``waitForNotifications()`` will then
+    return ``True``.
 
     If nothing is received before the timeout elapses, this will return ``False``.
+    If the device disconnects meanwhile, ``BTLEDisconnectError`` is raised.
 
-.. function:: writeCharacteristic(handle, val, withResponse=False)
+    While one thread waits here, other threads can still read and write
+    characteristics: see :ref:`usage`.
 
-    Writes the data *val* (of type ``str`` on Python 2.x, ``byte`` on 3.x) to the
+.. function:: writeCharacteristic(handle, val, withResponse=False, timeout)
+
+    Writes the data *val* (of type ``bytes``) to the
     characteristic identified by handle *handle*, which should be an integer in the
     range 1 to 65535. This is useful if you know a characteristic's GATT handle,
     but do not have a ``Characteristic`` object.
@@ -126,7 +143,7 @@ Instance Methods
     If *withResponse* is true, will await confirmation that the write was successful
     from the device.
 
-.. function:: readCharacteristic(handle)
+.. function:: readCharacteristic(handle, timeout)
 
     Reads the current value of the characteristic identified by *handle*. This is
     useful if you know the handle for the characteristic but do not have a suitable
@@ -149,3 +166,8 @@ All the properties listed below are read-only.
 .. py:attribute:: iface
 
     Bluetooth interface number (0 = ``/dev/hci0``) used for the connection.
+
+.. py:attribute:: responseTimeout
+
+    How long, in seconds, to wait for a reply when a method is not given a *timeout*
+    (``None``: for ever). This one can be changed.

@@ -33,11 +33,14 @@
 #include <glib.h>
 
 
-#include "lib/bluetooth.h"
-#include "lib/sdp.h"
-#include "lib/uuid.h"
-#include "lib/mgmt.h"
+#include "bluetooth/bluetooth.h"
+#include "bluetooth/hci.h"
+#include "bluetooth/hci_lib.h"
+#include "bluetooth/sdp.h"
+#include "bluetooth/uuid.h"
+#include "bluetooth/mgmt.h"
 #include "src/shared/mgmt.h"
+#include "src/shared/att-types.h"
 
 #include <btio/btio.h>
 #include "att.h"
@@ -64,7 +67,7 @@ static void try_open(void) {
     } while(0)
 
 #else
-#define DBG(fmt, ...)
+#define DBG(fmt, ...) do {} while(0)
 #endif
 #endif
 
@@ -86,6 +89,7 @@ static struct mgmt *mgmt_master = NULL;
 
 static int hci_dd = -1;
 static GIOChannel *hci_io = NULL;
+static guint hci_watch = 0;
 
 struct characteristic_data {
     uint16_t orig_start;
@@ -247,7 +251,7 @@ static void resp_mgmt_err(uint8_t status)
   resp_end();
 }
 
-static void cmd_status(int argcp, char **argvp)
+static void send_status(const char *errmsg)
 {
   resp_begin(rsp_STATUS);
   switch(conn_state)
@@ -274,13 +278,27 @@ static void cmd_status(int argcp, char **argvp)
 
   send_uint(tag_MTU, opt_mtu);
   send_str(tag_SEC_LEVEL, opt_sec_level);
+  if (errmsg)
+    send_str(tag_ERRMSG, errmsg);
   resp_end();
+}
+
+static void cmd_status(int argcp, char **argvp)
+{
+    send_status(NULL);
 }
 
 static void set_state(enum state st)
 {
     conn_state = st;
-    cmd_status(0, NULL);
+    send_status(NULL);
+}
+
+/* Like set_state(), but tells the client why (e.g. why a connection failed) */
+static void set_state_err(enum state st, const char *errmsg)
+{
+    conn_state = st;
+    send_status(errmsg);
 }
 
 static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
@@ -298,7 +316,8 @@ static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
         return;
     }
 
-    assert( len >= 3 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     handle = bt_get_le16(&pdu[1]);
 
     resp_begin( evt==ATT_OP_HANDLE_NOTIFY ? rsp_NOTIFY : rsp_IND );
@@ -323,7 +342,8 @@ static void gatts_find_info_req(const uint8_t *pdu, uint16_t len, gpointer user_
     uint16_t starting_handle, olen;
     size_t plen;
 
-    assert( len == 5 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     starting_handle = bt_get_le16(&pdu[1]);
     /* ending_handle = bt_get_le16(&pdu[3]); */
@@ -341,7 +361,8 @@ static void gatts_find_by_type_req(const uint8_t *pdu, uint16_t len, gpointer us
     uint16_t starting_handle, olen;
     size_t plen;
 
-    assert( len >= 7 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     starting_handle = bt_get_le16(&pdu[1]);
     /* ending_handle = bt_get_le16(&pdu[3]); */
@@ -360,7 +381,8 @@ static void gatts_read_by_type_req(const uint8_t *pdu, uint16_t len, gpointer us
     uint16_t starting_handle, olen;
     size_t plen;
 
-    assert( len == 7 || len == 21 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     starting_handle = bt_get_le16(&pdu[1]);
     /* ending_handle = bt_get_le16(&pdu[3]); */
@@ -381,7 +403,8 @@ static void gatts_read_req(const uint8_t *pdu, uint16_t len, gpointer user_data)
     uint16_t handle, olen;
     size_t plen;
 
-    assert( len == 3 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     handle = bt_get_le16(&pdu[1]);
 
@@ -398,7 +421,8 @@ static void gatts_read_blob_req(const uint8_t *pdu, uint16_t len, gpointer user_
     uint16_t handle, olen;
     size_t plen;
 
-    assert( len == 5 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     handle = bt_get_le16(&pdu[1]);
     /* offset = bt_get_le16(&pdu[3]); */
@@ -416,7 +440,8 @@ static void gatts_read_multi_req(const uint8_t *pdu, uint16_t len, gpointer user
     uint16_t handle1, olen;
     size_t plen;
 
-    assert( len >= 5 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     handle1 = bt_get_le16(&pdu[1]);
     /* handle2 = bt_get_le16(&pdu[3]); */
@@ -434,7 +459,8 @@ static void gatts_read_by_group_req(const uint8_t *pdu, uint16_t len, gpointer u
     uint16_t starting_handle, olen;
     size_t plen;
 
-    assert( len >= 7 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     starting_handle = bt_get_le16(&pdu[1]);
     /* ending_handle = bt_get_le16(&pdu[3]); */
@@ -453,7 +479,8 @@ static void gatts_write_req(const uint8_t *pdu, uint16_t len, gpointer user_data
     uint16_t handle, olen;
     size_t plen;
 
-    assert( len >= 3 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     handle = bt_get_le16(&pdu[1]);
 
@@ -465,14 +492,12 @@ static void gatts_write_req(const uint8_t *pdu, uint16_t len, gpointer user_data
 
 static void gatts_write_cmd(const uint8_t *pdu, uint16_t len, gpointer user_data)
 {
-    assert( len >= 3 );
     /* opcode = pdu[0]; */
     /* handle = bt_get_le16(&pdu[1]); */
 }
 
 static void gatts_signed_write_cmd(const uint8_t *pdu, uint16_t len, gpointer user_data)
 {
-    assert( len >= 15 );
     /* opcode = pdu[0]; */
     /* handle = bt_get_le16(&pdu[1]); */
 }
@@ -480,11 +505,13 @@ static void gatts_signed_write_cmd(const uint8_t *pdu, uint16_t len, gpointer us
 static void gatts_prep_write_req(const uint8_t *pdu, uint16_t len, gpointer user_data)
 {
     uint8_t *opdu;
-    uint8_t opcode, handle;
+    uint8_t opcode;
+    uint16_t handle;
     uint16_t olen;
     size_t plen;
 
-    assert( len >= 5 );
+    if (len < 3)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     handle = bt_get_le16(&pdu[1]);
     /* offset = bt_get_le16(&pdu[3]); */
@@ -502,7 +529,8 @@ static void gatts_exec_write_req(const uint8_t *pdu, uint16_t len, gpointer user
     uint16_t olen;
     size_t plen;
 
-    assert( len == 5 );
+    if (len < 1)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
     /* flags = pdu[1]; */
 
@@ -519,7 +547,8 @@ static void gatts_mtu_req(const uint8_t *pdu, uint16_t len, gpointer user_data)
     uint16_t mtu, olen;
     size_t plen;
 
-    assert( len >= 3 );
+    if (len < 1)
+        return; /* malformed PDU from the peer: ignore, don't abort */
     opcode = pdu[0];
 
     if (!dec_mtu_req(pdu, len, &mtu)) {
@@ -558,7 +587,7 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 
     DBG("io = %p, err = %p", io, err);
     if (err) {
-        set_state(STATE_DISCONNECTED);
+        set_state_err(STATE_DISCONNECTED, err->message);
         resp_str_error(err_CONN_FAIL, err->message);
         printf("# Connect error: %s\n", err->message);
         return;
@@ -572,7 +601,7 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
         g_error_free(gerr);
         mtu = ATT_DEFAULT_LE_MTU;
     }
-    else if (cid == ATT_CID)
+    else if (cid == BT_ATT_CID)
         mtu = ATT_DEFAULT_LE_MTU;
 
     attrib = g_attrib_new(iochannel, mtu, false);
@@ -821,10 +850,21 @@ static gboolean channel_watcher(GIOChannel *chan, GIOCondition cond,
 static void cmd_connect(int argcp, char **argvp)
 {
     GError *gerr = NULL;
-    if (conn_state != STATE_DISCONNECTED)
+    if (conn_state != STATE_DISCONNECTED) {
+        /* Used to be ignored silently: the client then waited for a reply
+         * that never came, while still talking to the previous device */
+        resp_str_error(err_BAD_STATE, "Not disconnected, cannot connect");
         return;
+    }
 
     if (argcp > 1) {
+        /* gatt_connect() ignores str2ba() failures, so a malformed address
+         * would make us connect to 00:00:00:00:00:00 */
+        if (bachk(argvp[1]) < 0) {
+            resp_str_error(err_BAD_PARAM, "Invalid device address");
+            return;
+        }
+
         g_free(opt_dst);
         opt_dst = g_strdup(argvp[1]);
 
@@ -847,15 +887,32 @@ static void cmd_connect(int argcp, char **argvp)
     }
 
     set_state(STATE_CONNECTING);
+
+    /* gatt_connect() doesn't check this either: on failure the source
+     * address would be left uninitialised */
+    if (opt_src != NULL && !strncmp(opt_src, "hci", 3)) {
+        bdaddr_t sba;
+
+        if (hci_devba(atoi(opt_src + 3), &sba) < 0) {
+            set_state_err(STATE_DISCONNECTED, "Bluetooth adapter not found or down");
+            return;
+        }
+        if (!bacmp(&sba, BDADDR_ANY)) {
+            set_state_err(STATE_DISCONNECTED, "Bluetooth adapter has no address (00:00:00:00:00:00)");
+            return;
+        }
+    }
+
     iochannel = gatt_connect(opt_src, opt_dst, opt_dst_type, opt_sec_level,
                         opt_psm, opt_mtu, connect_cb, &gerr);
 
     DBG("gatt_connect returned %p", iochannel);
     if (iochannel == NULL)
     {
-        set_state(STATE_DISCONNECTED);
-        g_error_free(gerr);
-        }
+        set_state_err(STATE_DISCONNECTED, gerr ? gerr->message : NULL);
+        if (gerr)
+            g_error_free(gerr);
+    }
     else
         g_io_add_watch(iochannel, G_IO_HUP | G_IO_NVAL, channel_watcher, NULL);
 }
@@ -1219,6 +1276,8 @@ static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 static void cmd_mtu(int argcp, char **argvp)
 {
+    long long mtu;
+
     if (conn_state != STATE_CONNECTED) {
         resp_error(err_BAD_STATE);
         return;
@@ -1238,11 +1297,13 @@ static void cmd_mtu(int argcp, char **argvp)
     }
 
     errno = 0;
-    opt_mtu = strtoll(argvp[1], NULL, 16);
-    if (errno != 0 || opt_mtu < ATT_DEFAULT_LE_MTU) {
+    mtu = strtoll(argvp[1], NULL, 16);
+    /* Don't store a rejected value: it would block any later valid request */
+    if (errno != 0 || mtu < ATT_DEFAULT_LE_MTU || mtu > UINT16_MAX) {
         resp_error(err_BAD_PARAM);
         return;
     }
+    opt_mtu = mtu;
 
     gatt_exchange_mtu(attrib, opt_mtu, exchange_mtu_cb, NULL);
 }
@@ -1313,8 +1374,26 @@ static void add_remote_oob_data_complete(uint8_t status, uint16_t len,
         resp_mgmt_err(status);
         return;
     }
-    ba2str(&rp->bdaddr, str);
-    DBG("  Remote data added for : %s\n", str);
+    if (len >= sizeof(*rp)) {
+        ba2str(&rp->bdaddr, str);
+        DBG("  Remote data added for : %s\n", str);
+    }
+    resp_mgmt(err_SUCCESS);
+}
+
+/* Decodes a 16-byte OOB value given as 32 hex digits */
+static bool oob_value_from_string(const char *str, uint8_t *val)
+{
+    uint8_t *data = NULL;
+    size_t len = gatt_attr_data_from_string(str, &data);
+
+    if (len != 16) {
+        g_free(data);
+        return false;
+    }
+    memcpy(val, data, 16);
+    g_free(data);
+    return true;
 }
 
 static bool add_remote_oob_data(uint16_t index, const bdaddr_t *bdaddr,
@@ -1323,73 +1402,36 @@ static bool add_remote_oob_data(uint16_t index, const bdaddr_t *bdaddr,
                 const char *hash256, const char *rand256)
 {
     struct mgmt_cp_add_remote_oob_data cp;
-    uint8_t *oob;
-    size_t len;
 
     if (!mgmt_master) {
         resp_error(err_NO_MGMT);
         return true;
     }
 
+    /* Values which are not given stay all zero */
     memset(&cp, 0, sizeof(cp));
     bacpy(&cp.addr.bdaddr, bdaddr);
     cp.addr.type = addr_type;
     if (hash192 && rand192) {
-        len = gatt_attr_data_from_string(hash192, &oob);
-        if (len == 0) {
-            resp_error(err_BAD_PARAM);
-            g_free(oob);
+        if (!oob_value_from_string(hash192, cp.hash192) ||
+            !oob_value_from_string(rand192, cp.rand192)) {
+            resp_mgmt(err_BAD_PARAM);
             return false;
         }
-        memcpy(cp.hash192, oob, 16);
-        g_free(oob);
-        len = gatt_attr_data_from_string(rand192, &oob);
-        if (len == 0) {
-            resp_error(err_BAD_PARAM);
-            memset(cp.hash192, 0, 16);
-            g_free(oob);
-            return false;
-        }
-        memcpy(cp.rand192, rand192, 16);
-        g_free(oob);
-    } else {
-        memset(cp.hash192, 0, 16);
-        memset(cp.rand192, 0, 16);
     }
     if (hash256 && rand256) {
-        len = gatt_attr_data_from_string(hash256, &oob);
-        if (len == 0) {
-            resp_error(err_BAD_PARAM);
-            memset(cp.hash192, 0, 16);
-            memset(cp.rand192, 0, 16);
-            g_free(oob);
+        if (!oob_value_from_string(hash256, cp.hash256) ||
+            !oob_value_from_string(rand256, cp.rand256)) {
+            resp_mgmt(err_BAD_PARAM);
             return false;
         }
-        memcpy(cp.hash256, oob, 16);
-        g_free(oob);
-        len = gatt_attr_data_from_string(rand256, &oob);
-        if (len == 0) {
-            resp_error(err_BAD_PARAM);
-            memset(cp.hash192, 0, 16);
-            memset(cp.rand192, 0, 16);
-            memset(cp.hash256, 0, 16);
-            g_free(oob);
-            return false;
-        }
-        memcpy(cp.rand256, rand256, 16);
-        g_free(oob);
-    } else {
-        memset(cp.hash256, 0, 16);
-        memset(cp.rand256, 0, 16);
     }
-    if (mgmt_send(mgmt_master, MGMT_OP_ADD_REMOTE_OOB_DATA, mgmt_ind, sizeof(cp), &cp,
+    if (mgmt_send(mgmt_master, MGMT_OP_ADD_REMOTE_OOB_DATA, index, sizeof(cp), &cp,
                         add_remote_oob_data_complete,
                         NULL, NULL) == 0) {
-        resp_error(err_SEND_FAIL);
-        g_free(oob);
+        resp_mgmt(err_SEND_FAIL);
         return false;
     }
-    g_free(oob);
     return true;
 }
 
@@ -1401,6 +1443,7 @@ static void cmd_add_oob(int argcp, char **argvp)
     char *C256 = NULL;
     char *R256 = NULL;
     uint8_t addr_type = BDADDR_LE_RANDOM;
+    int i;
 
     if (argcp < 7) {
         resp_mgmt(err_BAD_PARAM);
@@ -1412,23 +1455,28 @@ static void cmd_add_oob(int argcp, char **argvp)
         return;
     }
 
-    if (!memcmp(argvp[2], "public", 6)) {
+    if (!strcmp(argvp[2], "public")) {
         addr_type = BDADDR_LE_PUBLIC;
     }
 
-    if ((!memcmp(argvp[3], "C_192", 5)) && (!memcmp(argvp[5], "R_192", 5))) {
-        C192 = argvp[4];
-        R192 = argvp[6];
-        if ((argcp > 8) && !memcmp(argvp[5], "C_256", 5) && (!memcmp(argvp[7], "R_256", 5))) {
-            C256 = argvp[6];
-            R256 = argvp[8];
-        }
-    } else if ((!memcmp(argvp[3], "C_256", 5)) && (!memcmp(argvp[5], "R_256", 5))) {
-        C256 = argvp[4];
-        R256 = argvp[6];
+    /* Name/value pairs, in any order; a trailing odd argument is ignored */
+    for (i = 3; i + 1 < argcp; i += 2) {
+        if (!strcmp(argvp[i], "C_192"))
+            C192 = argvp[i + 1];
+        else if (!strcmp(argvp[i], "R_192"))
+            R192 = argvp[i + 1];
+        else if (!strcmp(argvp[i], "C_256"))
+            C256 = argvp[i + 1];
+        else if (!strcmp(argvp[i], "R_256"))
+            R256 = argvp[i + 1];
     }
 
-    if (!add_remote_oob_data(0, &bdaddr, addr_type, C192, R192, C256, R256)) {
+    if (!(C192 && R192) && !(C256 && R256)) {
+        resp_mgmt(err_BAD_PARAM);
+        return;
+    }
+
+    if (!add_remote_oob_data(mgmt_ind, &bdaddr, addr_type, C192, R192, C256, R256)) {
         DBG("Failed to add remote oob data");
     }
 }
@@ -1437,7 +1485,7 @@ static void read_local_oob_data_complete(uint8_t status, uint16_t len,
                     const void *param, void *user_data)
 {
     const struct mgmt_rp_read_local_oob_ext_data *rp = param;
-    uint32_t eir_len = rp->eir_len;
+    uint16_t eir_len;
     unsigned int i;
 
     if (status) {
@@ -1446,10 +1494,18 @@ static void read_local_oob_data_complete(uint8_t status, uint16_t len,
         resp_mgmt_err(status);
         return;
     }
+
+    if (len < sizeof(*rp) || len < sizeof(*rp) + btohs(rp->eir_len)) {
+        DBG("Wrong size of local OOB data response");
+        resp_mgmt(err_DECODING);
+        return;
+    }
+    eir_len = btohs(rp->eir_len);
+
     DBG("received local OOB ext with eir_len = %d",eir_len);
     for (i = 0; i<eir_len; i++)
         DBG("0x%02x ", rp->eir[i]);
-    
+
     resp_begin(rsp_OOB);
     send_data(rp->eir, eir_len);
     resp_end();
@@ -1651,8 +1707,257 @@ static void cmd_scan(int argcp, char **argvp)
     }
 }
 
-#include "hci.h"
-#include "hci_lib.h"
+/* Bluetooth 5 extended scanning. When the controller supports LE Extended
+ * Advertising the kernel uses these commands, and the controller then
+ * rejects the legacy scan commands ("Command Disallowed"). Extended scanning
+ * also reports advertisers that the legacy commands can't see. */
+#define OCF_LE_SET_EXT_SCAN_PARAMETERS  0x0041
+#define OCF_LE_SET_EXT_SCAN_ENABLE      0x0042
+#define EVT_LE_EXT_ADVERTISING_REPORT   0x0D
+
+#define LE_FEATURE_EXT_ADV_OCTET        1     /* LE feature bit 12 */
+#define LE_FEATURE_EXT_ADV_MASK         0x10
+
+#define EXT_ADV_REPORT_FIXED_SIZE       24    /* without the data */
+#define EXT_ADV_EVT_CONNECTABLE         0x0001
+#define EXT_ADV_EVT_DATA_STATUS(t)      (((t) >> 5) & 0x03)
+#define EXT_ADV_DATA_COMPLETE           0
+#define EXT_ADV_DATA_MORE               1
+#define EXT_ADV_ADDR_ANONYMOUS          0xFF
+#define EXT_ADV_MAX_DATA                1650
+
+static bool hci_ext_scan = false;   /* the passive scan uses extended commands */
+
+/* Advertising data split across several extended reports is put back
+ * together here before being passed on */
+static struct {
+    bool active;
+    bdaddr_t bdaddr;
+    uint8_t addr_type;
+    uint8_t sid;
+    uint16_t evt_type;
+    uint8_t rssi;
+    uint8_t data[EXT_ADV_MAX_DATA];
+    size_t len;
+} ext_frag;
+
+static uint8_t le_addr_type(uint8_t hci_addr_type)
+{
+    switch (hci_addr_type) {
+        case 0x00: /* public */
+        case 0x02: /* public identity, resolved by the controller */
+            return BDADDR_LE_PUBLIC;
+        case 0x01: /* random */
+        case 0x03: /* random static identity, resolved by the controller */
+            return BDADDR_LE_RANDOM;
+        default:
+            return 0;
+    }
+}
+
+static void send_scan_result(const bdaddr_t *bdaddr, uint8_t hci_addr_type, uint8_t rssi,
+                             bool connectable, const uint8_t *data, size_t len)
+{
+    struct mgmt_addr_info addr;
+
+    if (conn_state != STATE_SCANNING)
+        return;
+
+    bacpy(&addr.bdaddr, bdaddr);
+    addr.type = le_addr_type(hci_addr_type);
+
+    resp_begin(rsp_SCAN);
+    send_addr(&addr);
+    send_uint(tag_RSSI, 256-rssi);
+    send_uint(tag_FLAG, connectable ? 0 : MGMT_DEV_FOUND_NOT_CONNECTABLE);
+    if (len)
+        send_data(data, len);
+    resp_end();
+}
+
+/* Legacy LE Advertising Report; data starts at Num_Reports */
+static void process_adv_report(const uint8_t *data, size_t len)
+{
+    const uint8_t *rp = data + 1;
+    const uint8_t *end = data + len;
+    uint8_t num_reports;
+
+    if (len < 1)
+        return;
+
+    /* One event can hold several variable-length reports */
+    for (num_reports = data[0]; num_reports > 0; num_reports--) {
+        const le_advertising_info *ev = (const le_advertising_info *) rp;
+
+        if (rp + LE_ADVERTISING_INFO_SIZE + 1 > end ||
+            rp + LE_ADVERTISING_INFO_SIZE + ev->length + 1 > end) {
+            DBG("Truncated advertising report");
+            break;
+        }
+        /* ADV_SCAN_IND (2) and ADV_NONCONN_IND (3) aren't connectable */
+        send_scan_result(&ev->bdaddr, ev->bdaddr_type, ev->data[ev->length],
+                         ev->evt_type != 0x02 && ev->evt_type != 0x03,
+                         ev->data, ev->length);
+        rp += LE_ADVERTISING_INFO_SIZE + ev->length + 1;
+    }
+}
+
+static void ext_frag_flush(void)
+{
+    if (ext_frag.active)
+        send_scan_result(&ext_frag.bdaddr, ext_frag.addr_type, ext_frag.rssi,
+                         ext_frag.evt_type & EXT_ADV_EVT_CONNECTABLE,
+                         ext_frag.data, ext_frag.len);
+    ext_frag.active = false;
+    ext_frag.len = 0;
+}
+
+/* LE Extended Advertising Report; data starts at Num_Reports */
+static void process_ext_adv_report(const uint8_t *data, size_t len)
+{
+    const uint8_t *rp = data + 1;
+    const uint8_t *end = data + len;
+    uint8_t num_reports;
+
+    if (len < 1)
+        return;
+
+    for (num_reports = data[0]; num_reports > 0; num_reports--) {
+        uint16_t evt_type;
+        uint8_t addr_type, sid, rssi, data_len;
+        bdaddr_t bdaddr;
+        const uint8_t *adv_data;
+        size_t n;
+
+        if (rp + EXT_ADV_REPORT_FIXED_SIZE > end ||
+            rp + EXT_ADV_REPORT_FIXED_SIZE + rp[23] > end) {
+            DBG("Truncated extended advertising report");
+            break;
+        }
+        evt_type  = bt_get_le16(rp);
+        addr_type = rp[2];
+        memcpy(&bdaddr, rp + 3, sizeof(bdaddr));
+        sid       = rp[11];
+        rssi      = rp[13];
+        data_len  = rp[23];
+        adv_data  = rp + EXT_ADV_REPORT_FIXED_SIZE;
+        rp += EXT_ADV_REPORT_FIXED_SIZE + data_len;
+
+        /* Anonymous advertising carries no address: reporting it would
+         * show a device at 00:00:00:00:00:00 */
+        if (addr_type == EXT_ADV_ADDR_ANONYMOUS)
+            continue;
+
+        if (ext_frag.active &&
+            (bacmp(&ext_frag.bdaddr, &bdaddr) || ext_frag.addr_type != addr_type ||
+             ext_frag.sid != sid))
+            ext_frag_flush();     /* the rest of that data never came */
+
+        if (!ext_frag.active) {
+            ext_frag.active = true;
+            bacpy(&ext_frag.bdaddr, &bdaddr);
+            ext_frag.addr_type = addr_type;
+            ext_frag.sid = sid;
+            ext_frag.evt_type = evt_type;
+            ext_frag.len = 0;
+        }
+        ext_frag.rssi = rssi;
+        n = MIN((size_t) data_len, sizeof(ext_frag.data) - ext_frag.len);
+        memcpy(ext_frag.data + ext_frag.len, adv_data, n);
+        ext_frag.len += n;
+
+        /* Complete, or truncated: no more data will come */
+        if (EXT_ADV_EVT_DATA_STATUS(evt_type) != EXT_ADV_DATA_MORE)
+            ext_frag_flush();
+    }
+}
+
+static int hci_le_cmd(int dd, uint16_t ocf, void *cparam, int clen)
+{
+    struct hci_request rq;
+    uint8_t status;
+
+    memset(&rq, 0, sizeof(rq));
+    rq.ogf = OGF_LE_CTL;
+    rq.ocf = ocf;
+    rq.cparam = cparam;
+    rq.clen = clen;
+    rq.rparam = &status;
+    rq.rlen = 1;
+
+    if (hci_send_req(dd, &rq, 10000) < 0)
+        return -1;
+    if (status) {
+        errno = EIO;
+        return -1;
+    }
+    return 0;
+}
+
+static bool hci_le_ext_adv_supported(int dd)
+{
+    le_read_local_supported_features_rp rp;
+    struct hci_request rq;
+
+    memset(&rq, 0, sizeof(rq));
+    rq.ogf = OGF_LE_CTL;
+    rq.ocf = OCF_LE_READ_LOCAL_SUPPORTED_FEATURES;
+    rq.rparam = &rp;
+    rq.rlen = LE_READ_LOCAL_SUPPORTED_FEATURES_RP_SIZE;
+
+    if (hci_send_req(dd, &rq, 1000) < 0 || rp.status)
+        return false;
+    return rp.features[LE_FEATURE_EXT_ADV_OCTET] & LE_FEATURE_EXT_ADV_MASK;
+}
+
+static int passive_scan_enable(int dd, bool enable)
+{
+    uint8_t filter_dup = 0x00;  // do not filter duplicates
+
+    if (hci_ext_scan) {
+        uint8_t cp[6] = { enable, filter_dup, 0, 0, 0, 0 };  /* no duration/period */
+        return hci_le_cmd(dd, OCF_LE_SET_EXT_SCAN_ENABLE, cp, sizeof(cp));
+    }
+    return hci_le_set_scan_enable(dd, enable, filter_dup, 10000);
+}
+
+static int passive_scan_set_params(int dd)
+{
+    uint8_t own_type = LE_PUBLIC_ADDRESS;
+    uint8_t scan_type = 0x00;  // passive
+    uint8_t filter_policy = 0x00;
+    uint16_t interval = htobs(0x0010);
+    uint16_t window = htobs(0x0010);
+
+    if (hci_ext_scan) {
+        /* LE 1M PHY only */
+        uint8_t cp[8] = { own_type, filter_policy, 0x01, scan_type };
+        bt_put_le16(0x0010, cp + 4);
+        bt_put_le16(0x0010, cp + 6);
+        return hci_le_cmd(dd, OCF_LE_SET_EXT_SCAN_PARAMETERS, cp, sizeof(cp));
+    }
+    return hci_le_set_scan_parameters(dd, scan_type, interval, window,
+                                      own_type, filter_policy, 10000);
+}
+
+/* hci_io is owned by the watch, and closes hci_dd when the watch goes away.
+ * Call this once hci_monitor_cb() has returned FALSE. */
+static void passive_scan_watch_removed(void)
+{
+    hci_watch = 0;
+    hci_io = NULL;
+    hci_dd = -1;
+}
+
+static void passive_scan_close(void)
+{
+    if (hci_watch)
+        g_source_remove(hci_watch);
+    else if (hci_dd >= 0)
+        hci_close_dev(hci_dd);
+    passive_scan_watch_removed();
+    ext_frag.active = false;
+}
 
 static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer user_data)
 {
@@ -1661,6 +1966,15 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
     gsize len;
     GError *err= NULL;
     int r;
+
+    if (cond & (G_IO_ERR | G_IO_HUP | G_IO_NVAL)) {
+        /* Returning TRUE here would make the main loop spin at 100% CPU */
+        DBG("HCI socket error - removing watch.");
+        if (conn_state == STATE_SCANNING)
+            set_state(STATE_DISCONNECTED);
+        passive_scan_watch_removed();
+        return FALSE;
+    }
 
     if ((r= g_io_channel_read_chars(chan, (gchar *) buf, 1, &len, &err)) != G_IO_STATUS_NORMAL) {
         if (err) DBG("reading pkt type reports state %d: %s", r, err->message);
@@ -1671,6 +1985,8 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
     switch (type) {
         case HCI_COMMAND_PKT: {
             hci_command_hdr *ch;
+            bool scan_disabled = false;
+
             if ((r= g_io_channel_read_chars(chan, (gchar *) buf, HCI_COMMAND_HDR_SIZE, &len, &err)) != G_IO_STATUS_NORMAL) {
                 if (err) DBG("g_io_channel_read_chars() reports state %d: %s", r, err->message);
                 return TRUE;
@@ -1681,24 +1997,25 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
                 if (err) DBG("g_io_channel_read_chars() reports state %d: %s", r, err->message);
                 return TRUE;
             }
-            switch(ch->opcode) {
-                case 0x2000|OCF_LE_SET_SCAN_ENABLE: {
-                    le_set_scan_enable_cp *lescan = (le_set_scan_enable_cp *) ptr;
-                    if (lescan->enable) {
-                        DBG("Start of passive scan.");
-                    } else {
-                        if (conn_state == STATE_SCANNING) {
-                            set_state(STATE_DISCONNECTED);
-                        }
-                        DBG("End of passive scan - removing watch.");
-                        return FALSE; // remove watch
-                    }
-                }
-                break;
+            switch(btohs(ch->opcode)) {
+                /* Someone else (e.g. the kernel) stopped scanning */
+                case 0x2000|OCF_LE_SET_SCAN_ENABLE:
+                case 0x2000|OCF_LE_SET_EXT_SCAN_ENABLE:
+                    scan_disabled = ch->plen >= 1 && !ptr[0];
+                    break;
 
                 default:
                     DBG("Ignoring HCI COMMAND 0x%04x", ch->opcode);
             } // switch(ch->opcode)
+
+            if (scan_disabled) {
+                if (conn_state == STATE_SCANNING) {
+                    set_state(STATE_DISCONNECTED);
+                }
+                DBG("End of passive scan - removing watch.");
+                passive_scan_watch_removed();
+                return FALSE; // remove watch
+            }
         } break;
 
         case HCI_EVENT_PKT: {
@@ -1714,52 +2031,26 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
                 return TRUE;
             }
             switch(eh->evt) {
-                case EVT_CMD_COMPLETE: {
-                    // evt_cmd_complete *cmpl = (void *) ptr;
-                    // DBG("command complete (0x%02x|0x%04x) 0x%02x 0x%02x", cmpl->ncmd, cmpl->opcode, *(uint8_t *)(ptr+3), *(uint8_t *)(ptr+4));
-                }
+                case EVT_CMD_COMPLETE:
                 break;
 
                 case EVT_LE_META_EVENT: {
-                    evt_le_meta_event *meta = (void *) ptr;
+                    if (eh->plen < 1)
+                        return TRUE;
 
-                    switch(meta->subevent) {
-                        case EVT_LE_ADVERTISING_REPORT: {
-                            le_advertising_info *ev = (le_advertising_info *) (meta->data + 1);
-                            // const uint8_t *val= ev->bdaddr.b;
-                            const uint8_t rssi= ev->data[ev->length];
-                            struct mgmt_addr_info addr;
-                            switch (ev->bdaddr_type) {
-                                case LE_PUBLIC_ADDRESS: addr.type= BDADDR_LE_PUBLIC; break;
-                                case LE_RANDOM_ADDRESS: addr.type= BDADDR_LE_RANDOM; break;
-                                default: addr.type= 0;
-                            }
-                            addr.bdaddr= ev->bdaddr;
-                            // DBG("Device found: %02X:%02X:%02X:%02X:%02X:%02X type=%X length=%d data[0]=0x%02x rssi=0x%02x",
-                            //     val[5], val[4], val[3], val[2], val[1], val[0],
-                            //     ev->bdaddr_type, ev->length, ev->data[0], ev->data[ev->length]);
-                            if (0) {
-                                int i=0;
-                                for (i=0; i<ev->length; i++)
-                                    DBG("buf: %02x", ev->data[i]);
-                            }
+                    switch(ptr[0]) {   /* subevent */
+                        case EVT_LE_ADVERTISING_REPORT:
+                            process_adv_report(ptr + 1, eh->plen - 1);
+                            break;
 
-                            if (conn_state == STATE_SCANNING) {
-                                resp_begin(rsp_SCAN);
-                                send_addr(&addr);
-                                send_uint(tag_RSSI, 256-rssi);
-                                send_uint(tag_FLAG, 0);   //andy: where do we get these from?
-                                if (ev->length)
-                                    send_data(ev->data, ev->length);
-                                resp_end();
-                            }
-                        }
-                        break;
+                        case EVT_LE_EXT_ADVERTISING_REPORT:
+                            process_ext_adv_report(ptr + 1, eh->plen - 1);
+                            break;
 
                         default:
-                            DBG("Ignoring EVT_LE_ADVERTISING_REPORT subevent %02x", meta->subevent);
+                            DBG("Ignoring LE meta event subevent %02x", ptr[0]);
                             return TRUE;
-                    } // switch (meta->subevent)
+                    } // switch (subevent)
 
                 } // case EVT_LE_META_EVENT
                 break;
@@ -1783,59 +2074,62 @@ static gboolean hci_monitor_cb(GIOChannel *chan, GIOCondition cond, gpointer use
 static void discover(bool start)
 {
     int err;
-    uint8_t own_type = LE_PUBLIC_ADDRESS;
-    uint8_t scan_type = 0x00;  // passive
-    uint8_t filter_policy = 0x00;
-    uint16_t interval = htobs(0x0010);
-    uint16_t window = htobs(0x0010);
-    uint8_t filter_dup = 0x00;  // do not filter duplicates
+    struct hci_filter nf;
 
-    struct hci_filter nf, of;
-    //struct sigaction sa;
-    socklen_t olen;
-
-    hci_dd = hci_open_dev(mgmt_ind);
-    DBG("hcidev handle is 0x%x, mgmt_ind is %d", hci_dd, mgmt_ind);
     if (start) {
-        err = hci_le_set_scan_enable(hci_dd, 0x00, filter_dup, 10000);
-        err = hci_le_set_scan_parameters(hci_dd, scan_type, interval, window,
-                                             own_type, filter_policy, 10000);
+        if (hci_dd >= 0) {
+            /* Already scanning: a second socket and watch would report
+             * every device twice */
+            resp_mgmt(err_BUSY);
+            return;
+        }
+
+        hci_dd = hci_open_dev(mgmt_ind);
+        DBG("hcidev handle is 0x%x, mgmt_ind is %d", hci_dd, mgmt_ind);
+        if (hci_dd < 0) {
+            DBG("Could not open hci%d", mgmt_ind);
+            hci_dd = -1;
+            resp_mgmt(err_BAD_STATE);
+            return;
+        }
+
+        hci_ext_scan = hci_le_ext_adv_supported(hci_dd);
+        DBG("Using %s scan commands", hci_ext_scan ? "extended" : "legacy");
+
+        passive_scan_enable(hci_dd, false);
+        err = passive_scan_set_params(hci_dd);
         if (err < 0) {
             DBG("Set scan parameters failed");
+            passive_scan_close();
             resp_mgmt(err_BAD_STATE);
             return;
         }
-        hci_io = g_io_channel_unix_new(hci_dd);
-        g_io_channel_set_encoding(hci_io, NULL, NULL);
-        g_io_channel_set_close_on_unref(hci_io, TRUE);
-        g_io_add_watch(hci_io, G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL, hci_monitor_cb, NULL);
-        g_io_channel_unref(hci_io);
 
         // setup filter
-        olen = sizeof(of);
-        if (getsockopt(hci_dd, SOL_HCI, HCI_FILTER, &of, &olen) < 0) {
-            printf("Could not get socket options\n");
-            resp_mgmt(err_BAD_STATE);
-            return;
-        }
         hci_filter_clear(&nf);
         hci_filter_set_ptype(HCI_EVENT_PKT, &nf);
         hci_filter_set_event(EVT_LE_META_EVENT, &nf);
         hci_filter_set_event(EVT_CMD_COMPLETE, &nf);
         hci_filter_set_ptype(HCI_COMMAND_PKT, &nf);
-        hci_filter_set_event(OCF_LE_SET_SCAN_ENABLE, &nf);
 
         if (setsockopt(hci_dd, SOL_HCI, HCI_FILTER, &nf, sizeof(nf)) < 0) {
-            printf("Could not set socket options\n");
+            DBG("Could not set socket options");
+            passive_scan_close();
             resp_mgmt(err_BAD_STATE);
             return;
         }
 
+        hci_io = g_io_channel_unix_new(hci_dd);
+        g_io_channel_set_encoding(hci_io, NULL, NULL);
+        g_io_channel_set_close_on_unref(hci_io, TRUE);
+        hci_watch = g_io_add_watch(hci_io, G_IO_IN | G_IO_ERR | G_IO_HUP | G_IO_NVAL, hci_monitor_cb, NULL);
+        g_io_channel_unref(hci_io);
+
         DBG("LE Scan ...");
-        err = hci_le_set_scan_enable(hci_dd, 0x01, filter_dup, 10000);
+        err = passive_scan_enable(hci_dd, true);
         if (err < 0) {
-            //andy: signal error
             DBG("Enable scan failed");
+            passive_scan_close();
             resp_mgmt(err_BAD_STATE);
             return;
         }
@@ -1845,18 +2139,17 @@ static void discover(bool start)
     } else {
         const char* errcode = err_SUCCESS;
 
-        // set filter to receive no events
         DBG(" stop pasv scan -----------------------------------");
-        setsockopt(hci_dd, SOL_HCI, HCI_FILTER, &of, sizeof(of));
-
-        err = hci_le_set_scan_enable(hci_dd, 0x00, filter_dup, 10000);
-        if (err < 0) {
-            DBG("Disable scan failed");
-            errcode = err_BAD_STATE;
+        // Use the socket the scan was started on; opening a new one here
+        // would leak it, and its watch would keep reporting devices
+        if (hci_dd >= 0) {
+            err = passive_scan_enable(hci_dd, false);
+            if (err < 0) {
+                DBG("Disable scan failed");
+                errcode = err_BAD_STATE;
+            }
+            passive_scan_close();
         }
-        hci_close_dev(hci_dd);
-        hci_dd= -1;
-        hci_io= NULL;
         resp_mgmt(errcode);
         set_state(STATE_DISCONNECTED);
     }
@@ -2035,7 +2328,11 @@ static void mgmt_scanning(uint16_t index, uint16_t length,
             const void *param, void *user_data)
 {
     const struct mgmt_ev_discovering *ev = param;
-    assert(length == sizeof(*ev));
+
+    if (length < sizeof(*ev)) {
+        DBG("Wrong size of discovering event");
+        return;
+    }
 
     DBG("Scanning (0x%x): %s", ev->type, ev->discovering? "started" : "ended");
 
@@ -2047,7 +2344,12 @@ static void mgmt_device_found(uint16_t index, uint16_t length,
 {
     const struct mgmt_ev_device_found *ev = param;
     // const uint8_t *val = ev->addr.bdaddr.b;
-    assert(length == sizeof(*ev) + ev->eir_len);
+
+    // Don't abort the helper on a malformed event, just drop it
+    if (length < sizeof(*ev) || length < sizeof(*ev) + btohs(ev->eir_len)) {
+        DBG("Wrong size of device found event");
+        return;
+    }
     // DBG("Device found: %02X:%02X:%02X:%02X:%02X:%02X type=%X flags=%X", val[5], val[4], val[3], val[2], val[1], val[0], ev->addr.type, ev->flags);
 
     // Result sometimes sent too early
@@ -2058,9 +2360,9 @@ static void mgmt_device_found(uint16_t index, uint16_t length,
     resp_begin(rsp_SCAN);
     send_addr(&ev->addr);
     send_uint(tag_RSSI, -ev->rssi);
-    send_uint(tag_FLAG, -ev->flags);
+    send_uint(tag_FLAG, btohl(ev->flags));
     if (ev->eir_len)
-        send_data(ev->eir, ev->eir_len);
+        send_data(ev->eir, btohs(ev->eir_len));
     resp_end();
 }
 
@@ -2140,12 +2442,18 @@ int main(int argc, char *argv[])
 
     DBG("Exiting loop");
     cmd_disconnect(0, NULL);
+    if (hci_dd >= 0) {
+        // Don't leave the controller scanning after we've gone
+        passive_scan_enable(hci_dd, false);
+        passive_scan_close();
+    }
     fflush(stdout);
     g_io_channel_unref(pchan);
     g_main_loop_unref(event_loop);
 
     g_free(opt_src);
     g_free(opt_dst);
+    g_free(opt_dst_type);
     g_free(opt_sec_level);
 
     mgmt_unregister_index(mgmt_master, mgmt_ind);

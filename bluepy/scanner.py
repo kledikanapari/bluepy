@@ -1,18 +1,27 @@
-#!/usr/bin/python
-from __future__ import print_function
+#!/usr/bin/env python3
+"""Scans for 10 seconds, printing every device found, with all its details,
+as soon as it is seen (and again whenever its data changes)."""
 
-from time import gmtime, strftime, sleep
-from bluepy.btle import Scanner, DefaultDelegate, BTLEException
+from time import strftime
 import sys
+
+from bluepy.btle import Scanner, DefaultDelegate
+from bluepy.blescan import describe_device
 
 
 class ScanDelegate(DefaultDelegate):
 
     def handleDiscovery(self, dev, isNewDev, isNewData):
-        print(strftime("%Y-%m-%d %H:%M:%S", gmtime()), dev.addr, dev.getScanData())
+        if not (isNewDev or isNewData):
+            return
+        print("%s %s device:" % (strftime("%H:%M:%S"), "New" if isNewDev else "Updated"))
+        for line in describe_device(dev):
+            print("    " + line)
+        print()
         sys.stdout.flush()
 
-scanner = Scanner().withDelegate(ScanDelegate())
 
-# listen for ADV_IND packages for 10s, then exit
-scanner.scan(10.0, passive=True)
+if __name__ == "__main__":
+    scanner = Scanner().withDelegate(ScanDelegate())
+    # listen for ADV_IND packages for 10s, then exit
+    scanner.scan(10.0, passive=True)

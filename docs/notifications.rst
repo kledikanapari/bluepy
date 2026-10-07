@@ -3,8 +3,23 @@
 Working with notifications
 ==========================
 
-In ``bluepy``, notifications are processed by creating a "delegate" object and 
-registering it with the ``Peripheral``. A method in the delegate is called whenever
+The simplest way to get notifications is ``Characteristic.enableNotifications()``,
+with a function to call for each one::
+
+    from bluepy import btle
+
+    def battery_changed(characteristic, data):
+        print("Battery level:", data[0])
+
+    p = btle.Peripheral(address)
+    level = p.getServiceByUUID(0x180F).getCharacteristics(0x2A19)[0]
+    level.enableNotifications(battery_changed)
+
+    while True:
+        p.waitForNotifications(1.0)
+
+Notifications without a callback go to a "delegate" object registered with the
+``Peripheral``. A method in the delegate is called whenever
 a notification is received from the peripheral, as shown below:
 
 .. function:: handleNotification(cHandle, data)
@@ -20,9 +35,8 @@ a notification is received from the peripheral, as shown below:
     characteristic, this may be used to distinguish them. The 'handle' value can be
     found by calling the ``getHandle()`` method of a ``Characteristic`` object.
 
-    The *data* parameter is a ``str`` (Python 2.x) or ``bytes`` (Python 3.x) value
-    containing the notification data. It is recommended you use Python's ``struct``
-    module to unpack this, to allow portability between language versions.
+    The *data* parameter is a ``bytes`` value containing the notification data.
+    Python's ``struct`` module is handy to unpack it.
 
 It is recommended that the class used for the delegate object is derived from
 ``btle.DefaultDelegate``. This will ensure that an appropriate default method  
@@ -33,7 +47,7 @@ Example code
 
 Code to receive notifications from a peripheral can follow the outline below::
 
-    import btle
+    from bluepy import btle
 
     class MyDelegate(btle.DefaultDelegate):
         def __init__(self, params):
@@ -53,7 +67,7 @@ Code to receive notifications from a peripheral can follow the outline below::
     # Setup to turn notifications on, e.g.
     #   svc = p.getServiceByUUID( service_uuid )
     #   ch = svc.getCharacteristics( char_uuid )[0]
-    #   ch.write( setup_data )
+    #   ch.enableNotifications()
 
     # Main loop --------
 
@@ -62,7 +76,7 @@ Code to receive notifications from a peripheral can follow the outline below::
             # handleNotification() was called
             continue
 
-        print "Waiting..."
+        print("Waiting...")
         # Perhaps do something else here
 
 

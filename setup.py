@@ -1,13 +1,20 @@
-"""Python setup script for bluepy"""
+"""Builds bluepy-helper (C) along with the Python package.
+
+Package metadata is in pyproject.toml (repeated below for old setuptools).
+"""
 
 from setuptools.command.build_py import build_py
 from setuptools import setup
+import setuptools
 import subprocess
 import shlex
+import re
 import sys
 import os
 
-VERSION='1.3.0'
+# Single source of the version: bluepy/__init__.py
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bluepy', '__init__.py')) as f:
+    VERSION = re.search(r"^__version__ = '([^']+)'", f.read(), re.M).group(1)
 
 def pre_install():
     """Do the custom compiling of the bluepy-helper executable from the makefile"""
@@ -17,12 +24,12 @@ def pre_install():
             verfile.write('#define VERSION_STRING "%s"\n' % VERSION)
         for cmd in [ "make -C ./bluepy clean", "make -C bluepy -j1" ]:
             print("execute " + cmd)
-            msgs = subprocess.check_output(shlex.split(cmd), stderr=subprocess.STDOUT)
+            subprocess.check_output(shlex.split(cmd), stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         print("Failed to compile bluepy-helper. Exiting install.")
         print("Command was " + repr(cmd) + " in " + os.getcwd())
         print("Return code was %d" % e.returncode)
-        print("Output was:\n%s" % e.output)
+        print("Output was:\n%s" % e.output.decode(errors='replace'))
         sys.exit(1)
 
 class my_build_py(build_py):
@@ -38,7 +45,11 @@ setup_cmdclass = {
 # Discusssed at issue #158
 
 try:
-    from wheel.bdist_wheel import bdist_wheel
+    try:
+        # Part of setuptools since v70.1; the copy in 'wheel' is deprecated
+        from setuptools.command.bdist_wheel import bdist_wheel
+    except ImportError:
+        from wheel.bdist_wheel import bdist_wheel
 
     class BluepyBdistWheel(bdist_wheel):
         def finalize_options(self):
@@ -50,32 +61,33 @@ except ImportError:
     pass
 
 
-setup (
-    name='bluepy',
-    version=VERSION,
-    description='Python module for interfacing with BLE devices through Bluez',
-    author='Ian Harvey',
-    author_email='website-contact@fenditton.org',
-    url='https://github.com/IanHarvey/bluepy',
-    download_url='https://github.com/IanHarvey/bluepy/tarball/v/%s' % VERSION,
-    keywords=[ 'Bluetooth', 'Bluetooth Smart', 'BLE', 'Bluetooth Low Energy' ],
-    classifiers=[
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-    ],
-    packages=['bluepy'],
-    
-    package_data={
-        'bluepy': ['bluepy-helper', '*.json', 'bluez-src.tgz', 'bluepy-helper.c', 'version.h', 'Makefile']
-    },
-    cmdclass=setup_cmdclass,
-    entry_points={
-        'console_scripts': [
-            'thingy52=bluepy.thingy52:main',
-            'sensortag=bluepy.sensortag:main',
-            'blescan=bluepy.blescan:main',
-        ]
-    }
-)
+# setuptools before 61 (e.g. 52 on Debian 11 / Raspberry Pi OS Bullseye)
+# ignore the [project] table: without this, 'python3 setup.py install' would
+# install an empty package called UNKNOWN
+legacy_metadata = {}
+if int(setuptools.__version__.split('.')[0]) < 61:
+    legacy_metadata = dict(
+        name='bluepy',
+        description='Python module for interfacing with BLE devices through Bluez',
+        author='Ian Harvey',
+        author_email='website-contact@fenditton.org',
+        url='https://github.com/IanHarvey/bluepy',
+        python_requires='>=3.8',
+        packages=['bluepy'],
+        package_data={
+            'bluepy': ['bluepy-helper', '*.json', 'bluez-src.tgz', 'bluepy-helper.c', 'version.h', 'Makefile']
+        },
+        entry_points={
+            'console_scripts': [
+                'thingy52=bluepy.thingy52:main',
+                'sensortag=bluepy.sensortag:main',
+                'blescan=bluepy.blescan:main',
+            ]
+        },
+    )
 
+setup(
+    version=VERSION,
+    cmdclass=setup_cmdclass,
+    **legacy_metadata
+)

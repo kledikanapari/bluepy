@@ -28,7 +28,7 @@ Instance Methods
    ``Peripheral`` object. *cHandle* is the (integer) handle for the 
    characteristic - this can be used to distinguish between notifications
    from multiple sources on the same peripheral. *data* is the characteristic
-   data (a ``str`` type on Python 2.x, and ``bytes`` on 3.x).
+   data (``bytes``).
 
 .. py:method:: handleDiscovery(scanEntry, isNewDev, isNewData)
 

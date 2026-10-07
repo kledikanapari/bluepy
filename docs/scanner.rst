@@ -29,13 +29,19 @@ Instance Methods
     when broadcasts from devices are received. See the documentation for
     ``DefaultDelegate`` for details. 
 
-.. function:: scan( [timeout = 10] )
+.. function:: scan( [timeout = 10 [, passive = False [, name, serviceUUID, minRSSI, connectable]]] )
 
-    Scans for devices for the given *timeout* in seconds. During this 
+    Scans for devices for the given *timeout* in seconds. During this
     period, callbacks to the *delegate* object will be called. When the
     timeout ends, scanning will stop and the method will return a list
-    (or a *view* on Python 3.x) of ``ScanEntry`` objects for all devices
-    discovered during that time.
+    (a *view*) of ``ScanEntry`` objects for all devices
+    discovered during that time. With filters (see ``ScanEntry.matches()``),
+    e.g. ``scanner.scan(5, name="Thingy")``, it returns a list of the matching
+    devices only; the delegate still sees all of them.
+
+    A *passive* scan only listens: devices aren't asked for more data
+    (scan responses). It uses Bluetooth 5 extended scanning when the adapter
+    supports it, so it also finds devices using extended advertising.
     
     *scan()* is equivalent to calling the *clear()*, *start()*, 
     *process()* and *stop()* methods in order.
@@ -61,10 +67,17 @@ Instance Methods
     Disables reception of advertising broadcasts. Should be called after
     *process()* has returned.
 
-.. function:: getDevices()
+.. function:: getDevices( [name, serviceUUID, minRSSI, connectable] )
 
-    Returns a list (a *view* on Python 3.x) of ``ScanEntry`` objects for
+    Returns a list (a *view*) of ``ScanEntry`` objects for
     all devices which have been discovered (since the last *clear()* call).
+    With filters (see ``ScanEntry.matches()``), a list of the matching ones.
+
+A ``Scanner`` can be used in a ``with`` statement, which makes sure scanning stops::
+
+    with Scanner() as scanner:
+        scanner.start()
+        scanner.process(10)
 
 Sample code
 -----------
