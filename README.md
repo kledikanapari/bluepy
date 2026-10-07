@@ -105,7 +105,7 @@ The Python files are released into the public domain by their author, Ian Harvey
 Release Notes
 -------------
 
-Unreleased
+Release 1.4.0
 
 New:
 
@@ -133,6 +133,7 @@ New:
 - The bundled BlueZ code is updated from 5.47 (2017) to 5.87
 - Python 2 is no longer supported; Python 3.8 or later is needed. Package
   metadata moved to `pyproject.toml`
+- `bluepy.__version__` gives the version
 - Tests for the C code (`make -C bluepy test`), and CI on GitHub Actions
 - Documentation on permissions (`setcap`), timeouts, threads and logging
 

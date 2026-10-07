@@ -8,10 +8,13 @@ from setuptools import setup
 import setuptools
 import subprocess
 import shlex
+import re
 import sys
 import os
 
-VERSION='1.3.0'
+# Single source of the version: bluepy/__init__.py
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bluepy', '__init__.py')) as f:
+    VERSION = re.search(r"^__version__ = '([^']+)'", f.read(), re.M).group(1)
 
 def pre_install():
     """Do the custom compiling of the bluepy-helper executable from the makefile"""
