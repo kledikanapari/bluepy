@@ -243,6 +243,17 @@ class TestLogging(FakeHelperTestCase):
         self.assertTrue(any('Sent:' in m and 'conn' in m for m in logs.output))
         self.assertEqual(out.getvalue(), '')
 
+    def test_operations_logged_at_info(self):
+        with self.assertLogs('bluepy.btle', level=logging.INFO) as logs:
+            p = Peripheral(ADDR_A)
+            p.readCharacteristic(LEVEL_HANDLE)
+            p.writeCharacteristic(OTHER_HANDLE, b'\x01')
+            p.disconnect()
+        text = '\n'.join(logs.output)
+        for expected in ['INFO:bluepy.btle:Connecting to ' + ADDR_A, 'Connected to ' + ADDR_A,
+                         'Read handle 0x0012: 2a', 'Write handle 0x0015: 01', 'Disconnecting from']:
+            self.assertIn(expected, text)
+
     def test_debugging_flag_still_prints(self):
         out = io.StringIO()
         btle.Debugging = True

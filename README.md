@@ -68,12 +68,14 @@ scanning fails with `BTLEManagementError` ("Management not available
 Debugging
 ---------
 
-bluepy logs what it sends to and receives from `bluepy-helper` with the
-`logging` module, at debug level, under the name `bluepy.btle`:
+bluepy logs with the `logging` module, under the name `bluepy.btle`: every
+operation (scan, devices found, connection, reads, writes, notifications...)
+at INFO level, timeouts and errors at WARNING, and every line exchanged with
+`bluepy-helper` at DEBUG. Nothing is printed unless you configure logging:
 
     import logging
-    logging.basicConfig()
-    logging.getLogger('bluepy.btle').setLevel(logging.DEBUG)
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 I would recommend having command-line tools from BlueZ available for debugging. There
 are instructions for building BlueZ on the Raspberry Pi at http://www.elinux.org/RPi_Bluetooth_LE.

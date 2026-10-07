@@ -41,11 +41,22 @@ A ``Scanner`` should be used from one thread only.
 Logging
 -------
 
-``bluepy`` logs what it sends to and receives from ``bluepy-helper`` at debug
-level, with the ``logging`` module, under the name ``bluepy.btle``::
+``bluepy`` logs with the ``logging`` module, under the name ``bluepy.btle``:
+
+* at INFO level, every operation: scans and the devices found, connections,
+  services and characteristics found, reads, writes, notifications,
+  disconnections;
+* at WARNING level, timeouts, errors and lost connections;
+* at DEBUG level, every line exchanged with ``bluepy-helper``.
+
+Nothing is printed unless the program configures logging, e.g.::
 
     import logging
-    logging.basicConfig()
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+or, for bluepy only::
+
     logging.getLogger('bluepy.btle').setLevel(logging.DEBUG)
 
 Setting ``btle.Debugging = True`` still prints the same messages, but is
