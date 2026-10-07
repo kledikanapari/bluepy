@@ -289,6 +289,19 @@ class TestScanEntry(unittest.TestCase):
         self.assertFalse(dev.matches(connectable=False))
 
 
+class TestDescribeDevice(unittest.TestCase):
+    def test_all_details(self):
+        from bluepy.blescan import describe_device
+        dev = scan_entry(bytes.fromhex('020106' '0409466F6F' '020AF8' '05FF4C000102'
+                                       '03030F18' '05161A18AABB' '03191234'), rssi=60)
+        text = '\n'.join(describe_device(dev))
+        for expected in ['Address: aa:bb:cc:dd:ee:ff (public)', 'RSSI: -60 dBm', 'Connectable: yes',
+                         'Name: Foo', 'Flags: 0x06', 'Tx power: -8 dBm', 'Appearance: 0x3412',
+                         'Manufacturer: company 0x004c, data 0102', 'Service: Battery Service',
+                         'Service data: ', '= aabb', 'Raw advertising data: 020106']:
+            self.assertIn(expected, text)
+
+
 class TestScanner(FakeHelperTestCase):
     def test_scan_with_filters(self):
         scanner = Scanner(1)

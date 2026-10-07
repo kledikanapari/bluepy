@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import binascii
+import struct
 import os
 import sys
 from bluepy import btle
@@ -57,6 +58,61 @@ def dump_services(dev):
                     break
 
 
+_FLAG_NAMES = [(0x01, 'LE Limited Discoverable'), (0x02, 'LE General Discoverable'),
+               (0x04, 'BR/EDR Not Supported'), (0x08, 'LE + BR/EDR (controller)'),
+               (0x10, 'LE + BR/EDR (host)')]
+
+_DECODED = {btle.ScanEntry.FLAGS, btle.ScanEntry.SHORT_LOCAL_NAME, btle.ScanEntry.COMPLETE_LOCAL_NAME,
+            btle.ScanEntry.TX_POWER, btle.ScanEntry.APPEARANCE, btle.ScanEntry.MANUFACTURER,
+            btle.ScanEntry.SERVICE_DATA_16B, btle.ScanEntry.SERVICE_DATA_32B, btle.ScanEntry.SERVICE_DATA_128B,
+            btle.ScanEntry.INCOMPLETE_16B_SERVICES, btle.ScanEntry.COMPLETE_16B_SERVICES,
+            btle.ScanEntry.INCOMPLETE_32B_SERVICES, btle.ScanEntry.COMPLETE_32B_SERVICES,
+            btle.ScanEntry.INCOMPLETE_128B_SERVICES, btle.ScanEntry.COMPLETE_128B_SERVICES}
+
+
+def _hex(data):
+    return binascii.b2a_hex(data).decode('ascii')
+
+
+def _uuid_text(uuid):
+    name = uuid.getCommonName()
+    return name if name == str(uuid) else '%s (%s)' % (name, uuid)
+
+
+def describe_device(dev):
+    """Returns the lines describing everything known about a ScanEntry"""
+    lines = ['Address: %s (%s)' % (dev.addr, dev.addrType),
+             'RSSI: %d dBm' % dev.rssi,
+             'Connectable: %s' % ('yes' if dev.connectable else 'no'),
+             'Advertisements received: %d' % dev.updateCount]
+    name = dev.getName()
+    if name is not None:
+        lines.append('Name: %s' % name)
+    flags = dev.scanData.get(btle.ScanEntry.FLAGS)
+    if flags:
+        lines.append('Flags: 0x%02x %s' % (flags[0], ', '.join(n for (bit, n) in _FLAG_NAMES if flags[0] & bit)))
+    tx = dev.scanData.get(btle.ScanEntry.TX_POWER)
+    if tx:
+        lines.append('Tx power: %d dBm' % struct.unpack('<b', tx[:1])[0])
+    appearance = dev.scanData.get(btle.ScanEntry.APPEARANCE)
+    if appearance and len(appearance) >= 2:
+        lines.append('Appearance: 0x%04x' % struct.unpack('<H', appearance[:2])[0])
+    manufacturer = dev.getManufacturerData()
+    if manufacturer is not None:
+        lines.append('Manufacturer: company 0x%04x, data %s' % (manufacturer[0], _hex(manufacturer[1]) or '(none)'))
+    for uuid in dev.getServiceUUIDs():
+        lines.append('Service: %s' % _uuid_text(uuid))
+    for (uuid, data) in dev.getServiceData().items():
+        lines.append('Service data: %s = %s' % (_uuid_text(uuid), _hex(data) or '(none)'))
+    # Anything else, undecoded
+    for (sdid, desc, val) in dev.getScanData():
+        if sdid not in _DECODED:
+            lines.append('%s: <%s>' % (desc, val))
+    if dev.rawData:
+        lines.append('Raw advertising data: %s' % _hex(dev.rawData))
+    return lines
+
+
 class ScanPrint(btle.DefaultDelegate):
 
     def __init__(self, opts):
@@ -78,21 +134,11 @@ class ScanPrint(btle.DefaultDelegate):
         if dev.rssi < self.opts.sensitivity:
             return
 
-        print ('    Device (%s): %s (%s), %d dBm %s' %
-               (status,
-                   ANSI_WHITE + dev.addr + ANSI_OFF,
-                   dev.addrType,
-                   dev.rssi,
-                   ('' if dev.connectable else '(not connectable)'))
-               )
-        for (sdid, desc, val) in dev.getScanData():
-            if sdid in [8, 9]:
-                print ('\t' + desc + ': \'' + ANSI_CYAN + val + ANSI_OFF + '\'')
-            else:
-                print ('\t' + desc + ': <' + val + '>')
-        if not dev.scanData:
-            print ('\t(no data)')
+        print ('    Device (%s): %s' % (status, ANSI_WHITE + dev.addr + ANSI_OFF))
+        for line in describe_device(dev):
+            print ('\t' + line)
         print()
+        sys.stdout.flush()
 
 
 def main():
