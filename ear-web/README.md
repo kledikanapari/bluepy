@@ -29,6 +29,18 @@ Then open http://localhost:8080/ in Chrome/Edge/Brave (117+), pair the earbuds w
 - Use `localhost` (not the LAN IP): Web Serial only works in a secure context, and `http://localhost` counts as one.
 - A plain static server (e.g. `python -m http.server`) is not enough: device pages are opened as `/MainControl_<name>`, which `server.js` maps to `res/MainControl/MainControl_<name>.html` like the production server does.
 - Add `?debug=1` to a device page URL (e.g. `/MainControl_one?debug=1`) to see protocol logs in the browser console.
+- Or double-click `start-windows.bat` (Windows) / `start-mac-linux.command` (macOS, Linux): it starts the server and opens the browser.
+
+## Install as an app
+ear (web) is an installable web app (PWA): once installed it has its own icon and window, and works **without the server running**, because every file is stored locally on install.
+
+1. Start the server once (`npm start` or the launcher above) and open http://localhost:8080/ in Chrome or Edge.
+2. Click **Install app** under Connect (or the install icon in the address bar).
+3. Wait a few seconds so all files (~95 MB) are downloaded, then close the server.
+
+From then on, open "ear (web)" from the Start menu / Applications / desktop like any other app. To update it, run the server again and open the app once: it fetches the new files while the server is running.
+
+After adding, removing or renaming files in `res/`, run `npm run build:precache` and bump `CACHE_NAME` in `res/sw.js`.
 
 ## Features
  - Battery percentage                  

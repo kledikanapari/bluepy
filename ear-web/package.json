@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "build:css": "tailwindcss -i tailwind-input.css -o res/tailwind.css --minify",
-    "watch:css": "tailwindcss -i tailwind-input.css -o res/tailwind.css --watch"
+    "watch:css": "tailwindcss -i tailwind-input.css -o res/tailwind.css --watch",
+    "build:precache": "node scripts/build-precache.js"
   },
   "repository": {
     "type": "git",

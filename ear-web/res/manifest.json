@@ -1,7 +1,10 @@
 {
+  "id": "/",
   "name": "ear (web)",
   "short_name": "ear (web)",
-  "start_url": "index.html",
+  "description": "Control panel for Nothing and CMF earbuds and headphones",
+  "start_url": "/index.html",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#21201f",
   "theme_color": "#21201f",
@@ -17,7 +20,7 @@
       "type": "image/png",
       "sizes": "24x24"
     },
-{
+    {
       "src": "/icons/32x32.png",
       "type": "image/png",
       "sizes": "32x32"
@@ -52,6 +55,5 @@
       "type": "image/png",
       "sizes": "1024x1024"
     }
-
   ]
 }

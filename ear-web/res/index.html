@@ -73,6 +73,26 @@
 
 
 
+        #install_button {
+            text-align: center;
+            margin: -10px auto 20px;
+            width: 200px;
+        }
+
+        #install_button-c {
+            padding: 6px 16px;
+            border: 2px solid #333;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: transform 0.15s ease-in-out;
+        }
+
+            #install_button-c:hover {
+                transform: scale(1.05);
+                border: 2px solid #e82525
+            }
+
         .faq-container {
             margin-left: auto; 
             margin-right: auto; 
@@ -164,6 +184,10 @@
     </div>
 
 
+    <div id="install_button" onclick="installApp()" style="display: none;">
+        <div id="install_button-c">Install app</div>
+    </div>
+
     <div class="faq-container">
         <p>If you face any issues, please check the following:<br>
             - Open an issue on Github <a href="https://github.com/radiance-project/ear-web/issues">here</a> With your device model and browser version.<br>
@@ -217,6 +241,26 @@
                 }
                 await port.forget();
             }
+        }
+        // Chrome/Edge fire this when the app can be installed (it has its own window and works without the local server once installed)
+        let installPrompt = null;
+        window.addEventListener("beforeinstallprompt", (event) => {
+            event.preventDefault();
+            installPrompt = event;
+            document.getElementById("install_button").style.display = "block";
+        });
+        window.addEventListener("appinstalled", () => {
+            installPrompt = null;
+            document.getElementById("install_button").style.display = "none";
+        });
+        async function installApp() {
+            if (!installPrompt) {
+                return;
+            }
+            installPrompt.prompt();
+            await installPrompt.userChoice;
+            installPrompt = null;
+            document.getElementById("install_button").style.display = "none";
         }
         window.onload = function () {
             const banner = document.getElementById('announcement-banner');
