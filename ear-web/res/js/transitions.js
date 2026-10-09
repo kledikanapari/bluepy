@@ -1,0 +1,282 @@
+
+function transToLeftGest(side) {
+    current_side = side;
+    let caseGestureImg = document.getElementById("case_gesture_img")
+    if (caseGestureImg) {
+        caseGestureImg.style.opacity = "0"
+        caseGestureImg.style.zIndex = "-10"
+    }
+    if (current_side == "l") {
+        leftEarBattery.style.opacity = "0"
+
+        prod_name.style.opacity = "0"
+
+        pages_container.style.opacity = "0"
+        pages_container_two.style.opacity = "0"
+        ringButton.style.opacity = "0"
+        if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+            rightEarPeace.classList.remove("duration-[2s]")
+            rightEarPeace.classList.add("duration-300")
+            rightEarBattery.style.opacity = "0"
+            rightEarPeace.style.opacity = "0"
+        }
+
+        if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+            rightEarPeace.style.zIndex = "-10"
+        }
+
+        clearTimeout(intro_timeout);
+        clearTimeout(intro_timeout2);
+        leftEarPeace.classList.remove("h-44")
+        leftEarPeace.classList.remove("w-34")
+
+        leftEarPeace.style.marginTop = "120px"
+        if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+            leftEarPeace.style.marginLeft = "301px"  // dual: position on left
+        } else {
+            leftEarPeace.style.marginLeft = "300px"  // single: center
+        }
+
+        document.getElementById("ring_button").style.zIndex = "-10"
+        document.getElementById("eq_container_t").style.zIndex = "-10"
+
+        setTimeout(() => {
+            document.getElementById("test").style.opacity = "100"
+            document.getElementById("test").style.zIndex = "100"
+            document.getElementById("back").style.opacity = "100"
+        }, 500)
+
+    } else {
+
+        if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+            rightEarPeace.classList.remove("duration-[2s]")
+            rightEarPeace.classList.add("duration-300")
+        }
+
+        leftEarBattery.style.opacity = "0"
+        if (typeof rightEarBattery !== 'undefined' && rightEarBattery !== null) {
+            rightEarBattery.style.opacity = "0"
+        }
+        prod_name.style.opacity = "0"
+
+        pages_container.style.opacity = "0"
+        pages_container_two.style.opacity = "0"
+        ringButton.style.opacity = "0"
+        leftEarPeace.style.opacity = "0"
+
+        leftEarPeace.style.zIndex = "-10"
+
+        clearTimeout(intro_timeout);
+        clearTimeout(intro_timeout2);
+        if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+            rightEarPeace.classList.remove("h-44")
+            rightEarPeace.classList.remove("w-34")
+
+            rightEarPeace.style.marginTop = "120px"
+            rightEarPeace.style.marginLeft = "101px"
+        }
+
+        document.getElementById("ring_button").style.zIndex = "-10"
+        document.getElementById("eq_container_t").style.zIndex = "-10"
+
+        setTimeout(() => {
+            document.getElementById("test").style.opacity = "100"
+            document.getElementById("test").style.zIndex = "100"
+            document.getElementById("back").style.opacity = "100"
+        }, 500)
+    }
+}
+
+function transBackToLeft(e) {
+    document.getElementById("test").style.opacity = "0"
+    if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+        rightEarPeace.classList.remove("duration-[2s]")
+        rightEarPeace.classList.add("duration-300")
+    }
+
+    leftEarBattery.style.opacity = "100"
+    if (typeof rightEarBattery !== 'undefined' && rightEarBattery !== null) {
+        rightEarBattery.style.opacity = "100"
+    }
+    prod_name.style.opacity = "100"
+    pages_container.style.opacity = "100"
+    if (pages_container_two !== null) pages_container_two.style.opacity = "1"
+    ringButton.style.opacity = "100"
+    if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+        rightEarPeace.style.opacity = "100"
+    }
+    document.getElementById("back").style.opacity = "0"
+
+    leftEarPeace.style.zIndex = "300"
+    if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+        rightEarPeace.style.zIndex = "300"
+    }
+
+    leftEarPeace.classList.remove("h-52")
+    leftEarPeace.classList.add("h-44")
+    if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+        rightEarPeace.classList.remove("h-52")
+        rightEarPeace.classList.add("h-44")
+    }
+
+    document.getElementById("ring_button").style.zIndex = "10"
+    document.getElementById("eq_container_t").style.zIndex = "10"
+
+    leftEarPeace.style.marginTop = "0px"
+    if (e == "MainControl") leftEarPeace.style.marginLeft = "auto"
+    else leftEarPeace.style.marginLeft = "0px"
+    if (typeof rightEarPeace === 'undefined' || rightEarPeace === null) {
+        leftEarPeace.style.marginLeft = "0px"
+    }
+    document.getElementById("test").style.zIndex = "-10"
+
+    let caseGestureImg = document.getElementById("case_gesture_img")
+    if (caseGestureImg) {
+        caseGestureImg.style.opacity = "0"
+        caseGestureImg.style.zIndex = "-10"
+    }
+
+    //SAME FOR RIGHT EARPEACE
+    if (typeof rightEarPeace !== 'undefined' && rightEarPeace !== null) {
+        rightEarPeace.classList.remove("h-52")
+        rightEarPeace.classList.add("h-44")
+
+        rightEarPeace.style.marginTop = "0px"
+        if (e == "MainControl") rightEarPeace.style.marginLeft = "auto"
+        else rightEarPeace.style.marginLeft = "0px"
+    }
+    document.getElementById("test").style.zIndex = "-10"
+    leftEarPeace.style.opacity = "100"
+
+}
+
+var current_timeout;
+var current_timeout_fade;
+let current_page = 0
+function switchPage(page, force=false, legacy=true) {
+    var page_1 = document.getElementById("page_1_container");
+    var page_2 = document.getElementById("page_2_container");
+    var page_3 = document.getElementById("page_3_container");
+
+    current_timeout ? clearTimeout(current_timeout) : ""
+    current_timeout_fade ? clearTimeout(current_timeout_fade) : ""
+
+    if (legacy) {
+        if (current_page == 1 && page == 1 && force == false) {
+            page = 0
+        } else if (current_page == 0 && page == 0 && force == false) {
+            page = 1
+        }
+        current_page = page
+    } else {
+        page == "next" ? current_page++ : current_page--
+
+        if (page_3) {
+            if (current_page == 3) current_page = 0
+            if (current_page == -1) current_page = 2
+        } else {
+            if (current_page == 2) current_page = 0
+            if (current_page == -1) current_page = 1
+        }
+    }
+
+    switch (current_page) {
+        case 1:
+            document.getElementById("stage_two_selector_button").style.backgroundColor = "white"
+            if (page_3 !== null) document.getElementById("stage_three_selector_button").style.backgroundColor = "#6B7280"
+            document.getElementById("stage_one_selector_button").style.backgroundColor = "#6B7280"
+
+            page_1.style.opacity = "0"
+            if (page_3 !== null) page_3.style.opacity = "0"
+            current_timeout = setTimeout(() => {
+                page_1.style.zIndex = "-1"
+                if (page_3 !== null)  page_3.style.zIndex = "-1"
+                page_2.style.zIndex = "1"
+                current_timeout_fade = setTimeout(() => {
+                page_2.style.opacity = "100"
+                }, 100)
+            }, 100)
+            break
+        case 0:
+            document.getElementById("stage_one_selector_button").style.backgroundColor = "white"
+            if (page_3 !== null) document.getElementById("stage_three_selector_button").style.backgroundColor = "#6B7280"
+            document.getElementById("stage_two_selector_button").style.backgroundColor = "#6B7280"
+
+            page_2.style.opacity = "0"
+            if (page_3 !== null) page_3.style.opacity = "0"
+            current_timeout = setTimeout(() => {
+                page_2.style.zIndex = "-1"
+                if (page_3 !== null)  page_3.style.zIndex = "-1"
+                page_1.style.zIndex = "1"
+                current_timeout_fade = setTimeout(() => {
+                page_1.style.opacity = "100"
+                }, 100)
+            }, 100)
+            break
+        case 2:
+            document.getElementById("stage_two_selector_button").style.backgroundColor = "#6B7280"
+            document.getElementById("stage_one_selector_button").style.backgroundColor = "#6B7280"
+            if (page_3 != null) document.getElementById("stage_three_selector_button").style.backgroundColor = "white"
+
+            if (page_3 != null) page_3.style.opacity = "0"
+            page_1.style.opacity = "0"
+            current_timeout = setTimeout(() => {
+                page_1.style.zIndex = "-1"
+                page_2.style.zIndex = "-2"
+                if (page_3 != null) page_3.style.zIndex = "1"
+                current_timeout_fade = setTimeout(() => {
+                if (page_3 != null) page_3.style.opacity = "100"
+                }, 100)
+            }, 100)
+            break
+    }
+}
+
+function displayPopUp(e) {
+    document.getElementById("popup_container").style.opacity = "100"
+    document.getElementById("popup_container").style.zIndex = "1000"
+    document.getElementById("popup_content").style.zIndex = "1001"
+
+    document.getElementById("popup_content").innerHTML = ` <div class="w-fit flex m-auto text-md mb-5 mt-2">
+    Change gesture
+        </div>
+        <select id="list_container" class="flex flex-col w-fit m-auto bg-[#1B1D1F] w-[300px] outline-none p-3 border-[#333333] border-[1px] rounded-md" style="width: 300px; padding: 12px; border: #333333 1px solid; background-color: #1B1D1F; outline: none;">
+        ${e}</select>`
+}
+
+function showWarningPopup(html) {
+    document.getElementById("popup_container").style.opacity = "100"
+    document.getElementById("popup_container").style.zIndex = "1000"
+    document.getElementById("popup_content").style.zIndex = "1001"
+    document.getElementById("popup_content").innerHTML = html
+}
+
+function closePopUp() {
+    document.getElementById("popup_container").style.opacity = "0"
+    document.getElementById("popup_container").style.zIndex = "-10"
+    document.getElementById("popup_content").style.zIndex = "-10"
+}
+
+// Add a global click listener to warn about potential risk on ring button clicks
+document.addEventListener('click', function(e) {
+    if (e.target.id && e.target.id.startsWith('ring_button')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var side = e.target.id.split('-')[1]; // 'l' or 'r'
+        if (e.target.classList.contains('ringing-' + side)) {
+            // It's in stop mode, proceed without warning
+            proceedRing(side);
+        } else {
+            // Starting ring, show warning
+            showWarningPopup(`<div class="w-fit flex m-auto text-md mb-5 mt-2 text-white text-center">Warning: Ringing the device produces a loud sound. Please check if the device is not in use before continuing. Are you sure?</div><div class="flex justify-center mt-4"><button class="p-2 pl-6 pr-6 mr-2 bg-black border-none border-[1px] text-white rounded-full hover:bg-[#1B1D1F] ease-in-out duration-300" onclick="proceedRing('${side}')">Yes</button><button class="p-2 pl-6 pr-6 bg-black border-none border-[1px] text-white rounded-full hover:bg-[#1B1D1F] ease-in-out duration-300" onclick="closePopUp()">No</button></div>`);
+        }
+    }
+}, true);
+
+function proceedRing(side) {
+    closePopUp();
+    var funcName = 'ringBud' + (side === 'l' ? 'Left' : 'Right');
+    if (typeof window[funcName] === 'function') {
+        window[funcName]();
+    }
+}
